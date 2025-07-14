@@ -1,0 +1,19 @@
+{
+  "wifi": {
+    "ssid": "",
+    "password": ""
+  },
+  "ap_mode": {
+    "ssid": "Pico_Clock_AP",
+    "password": "password"
+  },
+  "weather": {
+    "api_key": "",
+    "location": "Taipei"
+  },
+  "user": {
+    "birthday": "0101",
+    "light_threshold": 56000,
+    "image_interval_min": 5
+  }
+}

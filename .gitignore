@@ -1,0 +1,11 @@
+# Ignore all .bin files in src/image and its subdirectories
+src/image/**/*.bin
+
+# Ignore the old config.py
+src/config.py
+
+# Do not ignore .gitkeep files (so empty directories can be tracked)
+!.gitkeep
+
+GEMINI.md
+src/config.json
