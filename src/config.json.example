@@ -1,19 +1,27 @@
 {
-  "wifi": {
-    "ssid": "",
-    "password": ""
-  },
   "ap_mode": {
     "ssid": "Pico_Clock_AP",
-    "password": "password"
+    "password": "123456"
+  },
+  "wifi": {
+    "ssid": "your_wifi_ssid",
+    "password": "your_wifi_password"
   },
   "weather": {
-    "api_key": "",
+    "api_key": "your_api_key_here",
     "location": "Taipei"
   },
   "user": {
-    "birthday": "0101",
-    "light_threshold": 56000,
-    "image_interval_min": 5
+    "birthday": "0101"
+  },
+  "display": {
+    "light_threshold": 50000,
+    "image_interval_min": 2
+  },
+  "chime": {
+    "enabled": true,
+    "interval": "hourly",
+    "pitch" : 1200 ,
+    "volume": 80
   }
 }

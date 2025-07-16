@@ -1,6 +1,7 @@
 import subprocess
 import os
 import argparse
+import time 
 
 # --- Configuration ---
 SOURCE_DIR = "src"
@@ -70,19 +71,29 @@ def ensure_remote_dirs(path):
         run_command(base_cmd + ["fs", "mkdir", f":{current}"])
 
 def clean_device():
-    print("🧹 清除裝置上舊有檔案...")
+    print("Cleaning device: Deleting files with extensions {}...".format(INCLUDE_EXTENSIONS))
     base_cmd = get_mpremote_base()
 
-    result = subprocess.run(base_cmd + ["fs", "ls"], capture_output=True, text=True, encoding='utf-8')
-    lines = result.stdout.strip().splitlines()
-    for line in lines:
-        parts = line.strip().split()  # 通常格式為 "[size] filename"
-        if len(parts) == 2:
-            filename = parts[1]
-        else:
-            filename = parts[0]
-        if filename and filename != ":":
-            run_command(base_cmd + ["fs", "rm", f":{filename}"])
+    # Recursively list all files from the root directory
+    proc = subprocess.run(base_cmd + ["fs", "ls", "-r", ":"], capture_output=True, text=True, encoding='utf-8')
+    if proc.returncode != 0:
+        print("Warning: Could not list files. Maybe device is empty or not connected.")
+        return
+
+    all_remote_files = proc.stdout.strip().splitlines()
+    
+    files_to_delete = []
+    for fpath in all_remote_files:
+        if any(fpath.endswith(ext) for ext in INCLUDE_EXTENSIONS):
+            files_to_delete.append(fpath)
+
+    if not files_to_delete:
+        print("No matching files found to clean.")
+        return
+
+    print(f"Found {len(files_to_delete)} files to delete.")
+    for f in files_to_delete:
+        run_command(base_cmd + ["fs", "rm", f":{f}"])
 
 def reset_device():
     print("\n🔄 重啟裝置...")
@@ -108,11 +119,18 @@ def upload_files():
         # 上傳檔案
         cmd = base_cmd + ["fs", "cp", local_path, f":{remote_path}"]
         if not run_command(cmd):
-            print(f"❌ 上傳失敗：{remote_path}")
+            print(f"Upload failed: {remote_path}")
             return
         
     print("\n✅ 上傳完成。你可以使用 `mpremote repl` 進入裝置。")
     reset_device()
+
+    print("等待裝置重啟並初始化...")
+    time.sleep(5) # <-- 建議延遲 2 到 3 秒，視裝置和程式碼複雜度而定
+
+    # --- 新增的程式碼：連接到 REPL ---
+    print("\n🖥️ 連接到裝置 Terminal (REPL)... 按 Ctrl+X 退出。")
+    run_command(base_cmd + ["repl"]) # 執行 mpremote repl
 
 
 if __name__ == "__main__":

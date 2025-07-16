@@ -14,7 +14,8 @@
 - **特殊事件圖片**：在特定日期（如生日）顯示專屬的慶祝圖片。
 - **環境光感測**：在光線昏暗時自動關閉螢幕，節省電力並避免夜間光害。
 - **觸控操作**：透過點擊電子紙螢幕進行互動（功能可自訂擴充）。
-- **AP 模式設定**：當無法連接 Wi-Fi 時，自動啟用 AP 模式，讓使用者透過手機或電腦連線至裝置，並透過網頁介面設定 Wi-Fi、天氣地點等參數。
+- **定時響聲功能**：可設定整點或每半小時透過蜂鳴器發出提示音，音調與音量可調整。
+- **AP 模式設定**：當無法連接 Wi-Fi 時，自動啟用 AP 模式，讓使用者透過手機或電腦連線至裝置，並透過網頁介面設定 Wi-Fi、天氣地點、定時響聲等參數，並可即時查看光感應器數值。
 
 ---
 
@@ -23,8 +24,9 @@
 1.  **Raspberry Pi Pico W** - 內建 Wi-Fi 的主控制器。
 2.  **[Waveshare 2.9inch Touch e-Paper HAT](https://www.waveshare.net/wiki/Pico-CapTouch-ePaper-2.9)** - 296x128 解析度，支援觸控的電子紙模組。
 3.  **光敏電阻 (Photoresistor)** - 用於偵測環境亮度，連接至 Pico 的 ADC 引腳。
-4.  **連接線與麵包板**
-5.  **(選用) 3D 列印外殼**：`hardware/` 目錄中提供了 3D 外殼的 `.SLDPRT` 檔案，可自行列印使用。
+4.  **無源蜂鳴器 (Passive Buzzer)** - 連接至 Pico 的 Pin 20，用於定時響聲功能。
+5.  **連接線與麵包板**
+6.  **(選用) 3D 列印外殼**：`hardware/` 目錄中提供了 3D 外殼的 `.SLDPRT` 檔案，可自行列印使用。
 
 ---
 
@@ -97,7 +99,8 @@
 - 當裝置無法連接到已設定的 Wi-Fi 時，會自動建立一個名為 `Pico-Clock-Setup` 的 Wi-Fi 熱點。
 - 使用您的手機或電腦連接到此熱點。
 - 打開瀏覽器，訪問 `http://192.168.4.1`。
-- 在網頁介面中填寫您的 Wi-Fi 資訊、天氣地點等參數。
+- 在網頁介面中填寫您的 Wi-Fi 資訊、天氣地點、定時響聲等參數。
+- 網頁會即時顯示光感應器數值，並每 3 秒自動更新。
 - 提交後，裝置將儲存設定並自動重啟，嘗試連接新的 Wi-Fi。
 
 #### b) 手動設定 (進階)
@@ -105,29 +108,30 @@
 您也可以在電腦上預先建立設定檔再上傳。此方式適合需要自訂 AP 模式 SSID 或天氣 API 金鑰的開發者。
 
 1.  將 `src/config.json.example` 複製一份並改名為 `src/config.json`。
-2.  打開 `src/config.json` 並依據您的需求填寫。結構說明如下：
-    ```json
-    {
-      "wifi": {
-        "ssid": "您的 Wi-Fi 名稱",
-        "password": "您的 Wi-Fi 密碼"
-      },
-      "ap_mode": {
-        "ssid": "Pico_Clock_AP", // 自訂 AP 模式的 SSID
-        "password": "password"   // 自訂 AP 模式的密碼
-      },
-      "weather": {
-        "api_key": "您的 OpenWeatherMap API 金鑰",
-        "location": "Taipei"
-      },
-      "user": {
-        "birthday": "0101", // 生日，格式為 MMDD
-        "light_threshold": 56000, // 光感應器閾值，低於此值螢幕關閉
-        "image_interval_min": 5 // 圖片輪播間隔（分鐘）
-      }
-    }
-    ```
+2.  打開 `src/config.json` 並依據您的需求填寫。請參考下方「可調設定參數」章節。
 3.  執行 `python upload.py`，腳本會將 `src` 目錄下的所有檔案（包含您的 `config.json`）上傳到裝置。
+
+---
+
+## 📊 可調設定參數
+
+所有設定參數儲存在 `config.json` 中，並可透過 AP 模式網頁介面進行調整。支援巢狀結構，如 `chime.enabled`、`weather.location`。
+
+| 參數名稱            | 說明                     | 類型   | 範例值        |
+|---------------------|--------------------------|--------|---------------|
+| `ap_mode_ssid`      | AP 模式 SSID              | 字串   | `"Pi_clock"` |
+| `ap_mode_password`  | AP 模式密碼               | 字串   | `"123456"` |
+| `wifi_ssid`         | Wi-Fi SSID              | 字串   | `"MyHomeWiFi"` |
+| `wifi_password`     | Wi-Fi 密碼             | 字串   | `"password"` |
+| `api_key`           | openweathermap API key  | 字串   | `""`     |
+| `location`          | 天氣地點                 | 字串   | `"Taipei"`     |
+| `birthday`          | 生日日期（MMDD）         | 字串   | `"0612"`       |
+| `light_threshold`   | ADC 光感臨界值           | 整數   | `56000`        |
+| `image_interval_min`| 圖片換圖間隔（分鐘）     | 整數   | `2`            |
+| `chime.enabled`     | 啟用定時響聲             | 布林值 | `true`         |
+| `chime.interval`    | 響聲間隔（整點／半小時）  | 字串   | `"hourly"`     |
+| `chime.pitch`       | 音調（頻率，300 ~ 3k Hz） | 整數   | `80`           |
+| `chime.volume`      | 音量（0~100）            | 整數   | `80`           |
 
 ---
 
@@ -154,10 +158,18 @@
 ### 專案結構
 
 - `src/`: 主程式碼目錄。
-  - `main.py`: 程式進入點。
-  - `config_manager.py`: 設定檔讀寫管理。
-  - `display_manager.py`: 顯示邏輯管理。
-  - `wifi_manager.py`: Wi-Fi 連線與 AP 模式管理。
+  - `main.py`: 程式進入點，負責初始化與協調各模組。
+  - `app_controller.py`: 應用程式主邏輯控制器。
+  - `app_state.py`: 管理應用程式的狀態。
+  - `chime.py`: 定時響聲功能模組。
+  - `config_manager.py`: 設定檔讀寫管理，提供統一的設定存取介面。
+  - `display_manager.py`: 顯示邏輯管理，負責畫面繪製與更新。
+  - `display_utils.py`: 顯示相關的工具函數。
+  - `file_manager.py`: 檔案操作相關工具。
+  - `hardware_manager.py`: 硬體相關操作（如 ADC 讀取、蜂鳴器控制）。
+  - `netutils.py`: 網路工具函數。
+  - `weather.py`: 天氣資料獲取與處理。
+  - `wifi_manager.py`: Wi-Fi 連線與 AP 模式管理，包含 Web 設定介面。
   - `epaper.py`: 電子紙驅動程式 (請勿修改)。
   - `image/`: 存放所有 `.bin` 圖片資源。
 - `tools/`: 開發輔助工具。

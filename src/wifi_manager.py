@@ -1,20 +1,17 @@
 # wifi_manager.py
 import network
 import socket
-import ure
 import ujson
 import time
 import machine
-from display_utils import display_rotated_screen, draw_scaled_text, draw_image
+import gc
+from display_utils import display_rotated_screen, draw_scaled_text
 from config_manager import config_manager
 
 def update_display_AP():
-    """
-    AP 模式下顯示 SSID 與 Password 資訊
-    """
     def draw(canvas):
-        ap_ssid = config_manager.get("ap_mode.ssid", "Pico_Clock_AP")
-        ap_password = config_manager.get("ap_mode.password", "password")
+        ap_ssid = config_manager.get("ap_mode.ssid", "Pi_clock")
+        ap_password = config_manager.get("ap_mode.password", "123456")
         draw_scaled_text(canvas, f"SSID: {ap_ssid}", 3, 20, 2, 0)
         draw_scaled_text(canvas, f"Password: {ap_password}", 3, 50, 2, 0)
         draw_scaled_text(canvas, "IP: 192.168.4.1", 3, 80, 2, 0)
@@ -27,241 +24,471 @@ def update_display_Restart():
 
 def unquote(s):
     """簡易的 URL decode 函式（MicroPython 用）"""
+    if not s:
+        return s
+    
+    # 先處理 + 為空格
+    s = s.replace('+', ' ')
+    
     res = ""
     i = 0
     while i < len(s):
         if s[i] == "%" and i + 2 < len(s):
             try:
-                res += chr(int(s[i+1:i+3], 16))
-            except Exception:
+                hex_code = s[i+1:i+3]
+                if len(hex_code) == 2:
+                    char_code = int(hex_code, 16)
+                    if 32 <= char_code <= 126:  # 只處理可顯示的 ASCII 字符
+                        res += chr(char_code)
+                    else:
+                        res += s[i:i+3]  # 保留原始字符
+                else:
+                    res += s[i]
+                i += 3
+            except (ValueError, TypeError):
                 res += s[i]
-            i += 3
+                i += 1
         else:
             res += s[i]
             i += 1
     return res
 
+def parse_query_string(query_string):
+    """解析 query string，避免使用正規表達式造成遞迴問題"""
+    params = {}
+    
+    if not query_string:
+        return params
+    
+    # 使用字串分割方式代替正規表達式
+    pairs = query_string.split('&')
+    
+    for pair in pairs:
+        if '=' in pair:
+            key, value = pair.split('=', 1)  # 只分割第一個 = 號
+            params[key] = unquote(value)
+        else:
+            params[pair] = ''
+    
+    return params
+
 def scan_networks():
     sta = network.WLAN(network.STA_IF)
     sta.active(True)
-    nets = sta.scan()  # 每個項目：(ssid, bssid, channel, RSSI, authmode, hidden)
+    nets = sta.scan()
     networks = []
-    for net in nets:
-        ssid = net[0]
-        if isinstance(ssid, bytes):
-            ssid = ssid.decode("utf-8")
-        rssi = net[3]
-        networks.append({"ssid": ssid, "rssi": rssi})
-    networks.sort(key=lambda x: x["rssi"], reverse=True)
-    return networks
+    for ssid_bytes, _, _, _, _, _ in nets:
+        try:
+            ssid = ssid_bytes.decode('utf-8')
+            if ssid:
+                networks.append(ssid)
+        except UnicodeError:
+            pass
+    return sorted(list(set(networks)))
 
 def generate_html_page(networks):
-    # 嘗試讀取預設天氣位置
-    default_location = config_manager.get("weather.location", "")
-    default_birthday = config_manager.get("user.birthday", "")
-    default_image_interval = config_manager.get("user.image_interval_min", 5)
-    default_light_threshold = config_manager.get("user.light_threshold", 56000)
-    
-    adc = machine.ADC(machine.Pin(26))
-    adc_value = adc.read_u16()
+    vals = {
+        "wifi_ssid": config_manager.get("wifi.ssid", ""),
+        "api_key": config_manager.get("weather.api_key", ""),
+        "location": config_manager.get("weather.location", "Taipei"),
+        "birthday": config_manager.get("user.birthday", "0101"),
+        "image_interval_min": config_manager.get("user.image_interval_min", 2),
+        "light_threshold": config_manager.get("user.light_threshold", 56000),
+        "chime_enabled": "checked" if config_manager.get("chime.enabled", False) else "",
+        "chime_interval_hourly": "selected" if config_manager.get("chime.interval") == "hourly" else "",
+        "chime_interval_half": "selected" if config_manager.get("chime.interval") == "half_hourly" else "",
+        "chime_pitch": config_manager.get("chime.pitch", 880),
+        "chime_volume": config_manager.get("chime.volume", 80),
+        "ap_ssid": config_manager.get("ap_mode.ssid", "Pi_clock"),
+        "ap_password": config_manager.get("ap_mode.password", "123456"),
+        "adc_value": machine.ADC(machine.Pin(26)).read_u16()
+    }
 
-    html = "HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n"
-    html += """
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PicoW WiFi 設定</title>
-  <style>
-    body { font-family: Arial, sans-serif; padding: 10px; margin: 0; background-color: #f4f4f4; }
-    h1 { color: #333; text-align: center; }
-    form { background: #fff; padding: 15px; margin-bottom: 10px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-    label { display: block; margin-bottom: 5px; font-weight: bold; }
-    select, input[type="password"], input[type="text"], input[type="number"] { width: 100%; padding: 8px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
-    input[type="submit"] { width: 100%; padding: 10px; background: #57c2e6; border: none; border-radius: 4px; color: #fff; font-size: 16px; }
-    input[type="submit"]:hover { background: #0d5069; }
-    .info { font-size: 12px; color: #606770; text-align: center; margin-top: 10px; }
-  </style>
-</head>
-<body>
-  <h1>選擇 WiFi 網路</h1>
-  <form action="/" method="get">
-    <label for="ssid">SSID:</label>
-    <select name="ssid" id="ssid">
-"""
-    for net in networks:
-        html += "<option value='{}'>{}</option>".format(net["ssid"], net["ssid"])
-    html += """
-    </select>
-    <label for="password">密碼:</label>
-    <input type="password" id="password" name="password" placeholder="請輸入密碼">
-    <label for="location">Weather Location:</label>
-    <input type="text" id="location" name="location" placeholder="請輸入天氣位置" value="{}">
-    <label for="birthday">Birthday (MMDD):</label>
-    <input type="text" id="birthday" name="birthday" value="{}">
-    <label for="image_interval_min">Image Interval (minutes):</label>
-    <input type="number" id="image_interval_min" name="image_interval_min" value="{}">
-    <label for="light_threshold">Light Threshold (for screen off):</label>
-    <input type="number" id="light_threshold" name="light_threshold" value="{}">
-    <input type="submit" value="儲存設定">
-  </form>
-  <form action="/" method="get">
-    <input type="hidden" name="action" value="refresh">
-    <input type="submit" value="更新網路列表">
-  </form>
-  <p class="info">Current Light Sensor Value: <span id="adc-value">{}</span></p>
-  <script>
-    setInterval(() => {{
-      fetch('/adc')
-        .then(res => res.json())
-        .then(data => {{
-          document.getElementById('adc-value').textContent = data.adc;
-        }});
-    }}, 3000);
-  </script>
-</body>
-</html>
-""".format(default_location, default_birthday, default_image_interval, default_light_threshold, adc_value)
+    ssid_options = ""
+    for ssid in networks:
+        selected = "selected" if ssid == vals['wifi_ssid'] else ""
+        ssid_options += f'<option value="{ssid}" {selected}>{ssid}</option>'
+
+    html = """HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n
+<!DOCTYPE html>
+<html lang="zh-TW"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Pico 時鐘設定</title>
+<style>
+body{margin:0;padding:1rem;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,Cantarell,'Open Sans','Helvetica Neue',sans-serif;background-color:#e0f7fa;color:#333;}
+.container{max-width:600px;margin:auto;background-color:#fff;padding:1.5rem;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);}
+h1{text-align:center;color:#00796b;margin-bottom:1.5rem;}
+fieldset{border:1px solid #00bcd4;border-radius:6px;padding:1rem;margin-bottom:1rem;background-color:#e0f2f7;}
+legend{font-weight:600;padding:0 .5rem;color:#00796b;}
+label{display:block;font-weight:500;margin-bottom:.5rem;color:#004d40;}
+input,select{width:100%;padding:0.75rem;box-sizing:border-box;border:1px solid #00bcd4;border-radius:6px;font-size:1rem;background-color:#f5f5f5;}
+input[type='checkbox']{width:auto;margin-right:.5rem;}
+.form-group{margin-bottom:1rem;}
+.info{font-size:.9rem;color:#004d40;margin-top:.25rem;}
+.submit-btn{width:100%;padding:1rem;font-size:1.1rem;font-weight:bold;color:#fff;background-color:#03dbfc;border:none;border-radius:6px;cursor:pointer;transition:background-color .2s;}
+.submit-btn:hover{background-color:#02b8d4;}
+.hidden{display:none;}
+</style>
+</head><body><div class="container">
+<h1>Pico 時鐘設定</h1>
+<form action="/" method="get">
+
+<fieldset><legend>Wi-Fi 連線</legend>
+<div class="form-group"><label for="ssid">SSID:</label><select id="ssid" name="ssid">""" + ssid_options + """</select></div>
+<div class="form-group"><label for="password">密碼:</label><input type="password" id="password" name="password"></div>
+</fieldset>
+
+<fieldset><legend>天氣與個人化</legend>
+<div class="form-group"><label for="api_key">天氣 API Key:</label><input type="password" id="api_key" name="api_key" value=\"""" + vals['api_key'] + """\" readonly></div>
+<div class="form-group"><label for="location">天氣地點:</label><input id="location" name="location" value=\"""" + vals['location'] + """\"></div>
+<div class="form-group"><label for="birthday">生日 (MMDD):</label><input id="birthday" name="birthday" value=\"""" + vals['birthday'] + """\"></div>
+</fieldset>
+
+<fieldset><legend>系統設定</legend>
+<div class="form-group"><label for="image_interval_min">圖片輪播間隔 (分鐘):</label><input type="number" id="image_interval_min" name="image_interval_min" value=\"""" + str(vals['image_interval_min']) + """\"></div>
+<div class="form-group"><label for="light_threshold">光感臨界值 (ADC):</label><input type="number" id="light_threshold" name="light_threshold" value=\"""" + str(vals['light_threshold']) + """\"><p class="info">目前光感值: <span id="adc-value">""" + str(vals['adc_value']) + """</span> (建議取開燈時的值再稍微大一點)</p></div>
+</fieldset>
+
+<fieldset><legend>定時響聲</legend>
+<div class="form-group" style="display:flex;align-items:center;"><input type="checkbox" id="chime_enabled" name="chime_enabled" value="true" """ + vals['chime_enabled'] + """><label for="chime_enabled" style="margin-bottom:0;">啟用定時響聲</label></div>
+<div class="form-group"><label for="chime_interval">響聲間隔:</label><select id="chime_interval" name="chime_interval"><option value="hourly" """ + vals['chime_interval_hourly'] + """>每小時</option><option value="half_hourly" """ + vals['chime_interval_half'] + """>每半小時</option></select></div>
+<div class="form-group"><label for="chime_pitch">音高 (Hz):</label><input type="number" id="chime_pitch" name="chime_pitch" value=\"""" + str(vals['chime_pitch']) + """\"></div>
+<div class="form-group"><label for="chime_volume">音量 (0-100):</label><input type="number" id="chime_volume" name="chime_volume" value=\"""" + str(vals['chime_volume']) + """\"></div>
+</fieldset>
+
+<fieldset><legend>AP 模式設定</legend>
+<div class="form-group"><label for="ap_mode_ssid">AP 模式 SSID:</label><input id="ap_mode_ssid" name="ap_mode_ssid" value=\"""" + vals['ap_ssid'] + """\"></div>
+<div class="form-group"><label for="ap_mode_password">AP 模式密碼:</label><input type="password" id="ap_mode_password" name="ap_mode_password" value=\"""" + vals['ap_password'] + """\"></div>
+</fieldset>
+
+<button type="submit" class="submit-btn">儲存設定並重啟</button>
+</form></div>
+
+<script>
+let clickCount = 0;
+let lastClickTime = 0;
+const apiKeyInput = document.getElementById('api_key');
+
+function updateAdc(){fetch('/adc').then(r=>r.json()).then(d=>{document.getElementById('adc-value').innerText=d.adc;}).catch(e=>console.error(e));}
+function testChime(){const p=document.getElementById('chime_pitch').value;const v=document.getElementById('chime_volume').value;fetch('/test_chime?pitch='+p+'&volume='+v).catch(e=>console.error(e));}
+
+apiKeyInput.addEventListener('click', () => { 
+    const currentTime = Date.now();
+    if (currentTime - lastClickTime < 3000) { 
+        clickCount++;
+        if (clickCount >= 5) { 
+            apiKeyInput.readOnly = false;
+            apiKeyInput.type = 'text';
+            apiKeyInput.style.backgroundColor = '#fff';
+            clickCount = 0; 
+        }
+    } else { 
+        clickCount = 1;
+    }
+    lastClickTime = currentTime;
+});
+
+document.addEventListener('DOMContentLoaded',()=>{ 
+setInterval(updateAdc,3000);
+document.getElementById('chime_pitch').addEventListener('change',testChime);
+document.getElementById('chime_volume').addEventListener('change',testChime);
+});
+</script></body></html>"""
     return html
 
-def connect_wifi(ssid, password):
-    sta = network.WLAN(network.STA_IF)
-    sta.active(True)
-    sta.connect(ssid, password)
-    timeout = 20
-    while not sta.isconnected() and timeout:
-        time.sleep(1)
-        timeout -= 1
-    if sta.isconnected():
-        print("WiFi connected, IP:", sta.ifconfig()[0])
-        return sta
-    else:
-        print("WiFi connection failed.")
-        return None
-
-def start_ap_mode():
-    ap = network.WLAN(network.AP_IF)
-    ap.active(True)
-    ap_ssid = config_manager.get("ap_mode.ssid", "Pico_Clock_AP")
-    ap_password = config_manager.get("ap_mode.password", "password")
-    ap.config(essid=ap_ssid, password=ap_password)
-    print("AP mode started, SSID:", ap.config("essid"))
-    return ap
-
 def run_web_server():
+    """
+    運行 Web 服務器處理配置請求，包含 10 分鐘超時機制
+    """
     addr = socket.getaddrinfo("0.0.0.0", 80)[0][-1]
     s = socket.socket()
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind(addr)
     s.listen(1)
+    
     print("Web server listening on", addr)
+    
+    start_time = time.time()
+    timeout_duration = 600  # 10 minutes
+    
     while True:
-        cl, addr = s.accept()
-        print("Client connected from", addr)
-        cl_file = cl.makefile("rwb", 0)
-        request = ""
-        while True:
-            line = cl_file.readline()
-            if not line or line == b"\r\n":
-                break
-            request += line.decode()
-        print("Request:", request)
-
-        if request.startswith("GET /adc"):
-            adc = machine.ADC(machine.Pin(26))
-            adc_value = adc.read_u16()
-            response = ujson.dumps({'adc': adc_value})
-            cl.send("HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n\r\n")
-            cl.send(response)
-            cl.close()
-            continue
-
-        # 忽略 favicon 請求
-        if request.startswith("GET /favicon.ico"):
-            cl.send("HTTP/1.0 404 Not Found\r\n\r\n")
-            cl.close()
-            continue
-        if "action=refresh" in request:
-            nets = scan_networks()
-            page = generate_html_page(nets)
-            cl.send(page)
-            cl.close()
-            continue
-
-        match = ure.search(r"\?(ssid=[^ ]+)", request)
-        if match:
-            query_string = match.group(1)
-            match_params = ure.search(r"ssid=([^&]+)&password=([^&]+)&location=([^&]+)&birthday=([^&]+)&image_interval_min=([^&]+)&light_threshold=([^&]+)", query_string)
-            if match_params:
-                new_ssid = unquote(match_params.group(1))
-                new_password = unquote(match_params.group(2))
-                new_location = unquote(match_params.group(3))
-                new_birthday = unquote(match_params.group(4))
-                new_image_interval = int(unquote(match_params.group(5)))
-                new_light_threshold = int(unquote(match_params.group(6)))
-
-                config_manager.set("wifi.ssid", new_ssid)
-                config_manager.set("wifi.password", new_password)
-                config_manager.set("weather.location", new_location)
-                config_manager.set("user.birthday", new_birthday)
-                config_manager.set("user.image_interval_min", new_image_interval)
-                config_manager.set("user.light_threshold", new_light_threshold)
+        try:
+            # 檢查是否超過 10 分鐘
+            if time.time() - start_time > timeout_duration:
+                print("AP mode timeout (10 minutes), restarting...")
+                s.close()
+                machine.reset()
+            
+            # 設定 socket 接受連線的超時為 1 秒，避免無限期等待
+            s.settimeout(1.0)
+            
+            try:
+                cl, addr = s.accept()
+                print("Client connected from", addr)
+            except OSError:
+                # 超時，繼續迴圈檢查總體超時
+                continue
+            
+            # 重設超時給客戶端連線處理
+            cl.settimeout(10.0)
+            
+            try:
+                # 使用 makefile 穩定處理請求
+                cl_file = cl.makefile("rwb", 0)
+                request = ""
                 
-                update_display_Restart()
-                response = ("""HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n
+                # 讀取完整的 HTTP 請求
+                while True:
+                    try:
+                        line = cl_file.readline()
+                        if not line or line == b"\r\n":
+                            break
+                        request += line.decode()
+                    except OSError:
+                        break
+                
+                print("Request:", request[:100] + "..." if len(request) > 100 else request)
+                
+                # 忽略 favicon 請求
+                if "GET /favicon.ico" in request:
+                    cl.send(b"HTTP/1.0 404 Not Found\r\n\r\n")
+                    cl.close()
+                    continue
+                
+                # 處理 ADC 請求
+                if "GET /adc" in request:
+                    adc_value = machine.ADC(machine.Pin(26)).read_u16()
+                    response = "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n\r\n{\"adc\": " + str(adc_value) + "}"
+                    cl.send(response.encode())
+                    cl.close()
+                    continue
+                
+                # 處理測試響聲請求
+                if "GET /test_chime" in request:
+                    cl.send(b"HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n\r\nChime test")
+                    cl.close()
+                    continue
+                
+                # 處理配置表單提交
+                if "GET /?" in request and "ssid=" in request:
+                    print("Processing configuration form...")
+                    
+                    # 先發送成功頁面，避免連線中斷
+                    success_page = """HTTP/1.0 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>設定成功</title>
+  <title>設定進行中</title>
   <style>
-    body { font-family: Arial, sans-serif; padding: 10px; margin: 0; background-color: #f4f4f4; text-align: center; }
-    .container { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); display: inline-block; margin-top: 50px; }
-    h1 { color: #333; margin-bottom: 10px; }
-    p { color: #666; font-size: 16px; }
+    body { font-family: Arial, sans-serif; padding: 20px; margin: 0; background-color: #f4f4f4; text-align: center; }
+    .container { background: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); display: inline-block; margin-top: 50px; max-width: 400px; }
+    h1 { color: #00796b; margin-bottom: 20px; }
+    p { color: #666; font-size: 16px; line-height: 1.5; }
+    .progress { width: 100%; height: 4px; background-color: #e0e0e0; border-radius: 2px; margin: 20px 0; overflow: hidden; }
+    .progress-bar { width: 0%; height: 100%; background-color: #00796b; border-radius: 2px; animation: progress 3s ease-in-out forwards; }
+    @keyframes progress { to { width: 100%; } }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>設定已儲存</h1>
-    <p>Pico Pi Clock 將重新啟動。</p>
+    <h1>Pico 設定完成</h1>
+    <p>設定已成功儲存，系統將在 3 秒後重新啟動。</p>
+    <div class="progress"><div class="progress-bar"></div></div>
+    <p>請稍候...</p>
   </div>
 </body>
 </html>
-""")
-                cl.send(response)
-                cl.close()
-                s.close()
-                time.sleep(5)
-                machine.reset()
-                raise SystemExit
-        else:
-            nets = scan_networks()
-            page = generate_html_page(nets)
-            cl.send(page)
-            cl.close()
-    print("Web server terminated. Please reboot Pico manually.")
-    while True:
-        time.sleep(1)
+"""
+                    
+                    try:
+                        cl.send(success_page.encode())
+                        cl.close()
+                    except Exception as e:
+                        print("Error sending response:", e)
+                    
+                    # 使用新的解析方法
+                    try:
+                        # 提取 query string
+                        if "?" in request:
+                            query_start = request.find("?") + 1
+                            query_end = request.find(" ", query_start)
+                            if query_end == -1:
+                                query_end = request.find("\r", query_start)
+                            if query_end == -1:
+                                query_end = len(request)
+                            
+                            query_string = request[query_start:query_end]
+                            print("Query string:", query_string[:100] + "..." if len(query_string) > 100 else query_string)
+                            
+                            # 使用新的解析函數
+                            params = parse_query_string(query_string)
+                            print("Parsed parameters:", len(params), "items")
+                            
+                            # 安全地取得參數值
+                            new_ssid = params.get("ssid", "")
+                            new_password = params.get("password", "")
+                            new_location = params.get("location", "Taipei")
+                            new_api_key = params.get("api_key", "")
+                            new_birthday = params.get("birthday", "0101")
+                            
+                            print("SSID:", new_ssid)
+                            print("Password length:", len(new_password))
+                            print("Location:", new_location)
+                            
+                            # 構建配置
+                            config_data = {
+                                "ap_mode": {
+                                    "ssid": params.get("ap_mode_ssid", "Pi_clock"),
+                                    "password": params.get("ap_mode_password", "123456")
+                                },
+                                "wifi": {
+                                    "ssid": new_ssid,
+                                    "password": new_password
+                                },
+                                "weather": {
+                                    "api_key": new_api_key,
+                                    "location": new_location
+                                },
+                                "user": {
+                                    "birthday": new_birthday,
+                                    "light_threshold": 56000,
+                                    "image_interval_min": 2
+                                },
+                                "chime": {
+                                    "enabled": "chime_enabled" in params,
+                                    "interval": params.get("chime_interval", "hourly"),
+                                    "pitch": 880,
+                                    "volume": 80
+                                }
+                            }
+                            
+                            # 處理數值參數，加入異常處理
+                            try:
+                                config_data["user"]["light_threshold"] = int(params.get("light_threshold", "56000"))
+                            except (ValueError, TypeError):
+                                config_data["user"]["light_threshold"] = 56000
+                            
+                            try:
+                                config_data["user"]["image_interval_min"] = int(params.get("image_interval_min", "2"))
+                            except (ValueError, TypeError):
+                                config_data["user"]["image_interval_min"] = 2
+                            
+                            try:
+                                config_data["chime"]["pitch"] = int(params.get("chime_pitch", "880"))
+                            except (ValueError, TypeError):
+                                config_data["chime"]["pitch"] = 880
+                            
+                            try:
+                                config_data["chime"]["volume"] = int(params.get("chime_volume", "80"))
+                            except (ValueError, TypeError):
+                                config_data["chime"]["volume"] = 80
+                            
+                            # 保存配置
+                            print("Saving configuration...")
+                            with open("config.json", "w") as f:
+                                ujson.dump(config_data, f)
+                            print("Configuration saved successfully!")
+                            
+                            # 驗證保存
+                            with open("config.json", "r") as f:
+                                saved_config = ujson.load(f)
+                                print("Verification - SSID:", saved_config.get("wifi", {}).get("ssid", "NOT FOUND"))
+                            
+                        else:
+                            print("No query string found in request")
+                            
+                    except Exception as e:
+                        print("Error in configuration processing:", str(e))
+                        import sys
+                        sys.print_exception(e)
+                    
+                    # 顯示重啟訊息並重啟
+                    try:
+                        update_display_Restart()
+                        print("Restarting in 3 seconds...")
+                        time.sleep(3)
+                        s.close()
+                        machine.reset()
+                    except Exception as e:
+                        print("Error during restart:", e)
+                        machine.reset()
+                
+                # 顯示主配置頁面
+                else:
+                    try:
+                        networks = scan_networks()
+                        page = generate_html_page(networks)
+                        cl.send(page.encode())
+                        cl.close()
+                    except Exception as e:
+                        print("Error generating page:", e)
+                        try:
+                            cl.close()
+                        except:
+                            pass
+                    
+            except Exception as e:
+                print("Error handling client:", e)
+                import sys
+                sys.print_exception(e)
+                try:
+                    cl.close()
+                except:
+                    pass
+                continue
+                
+        except Exception as e:
+            print("Server error:", e)
+            import sys
+            sys.print_exception(e)
+            continue
+        finally:
+            gc.collect()
 
 def wifi_manager():
-    ssid = config_manager.get("wifi.ssid")
-    password = config_manager.get("wifi.password")
-
-    if ssid and password:
-        wlan = connect_wifi(ssid, password)
-        if wlan and wlan.isconnected():
-            return wlan
-    # 若無有效設定，則進入 AP 模式並啟動 Web 伺服器
+    """
+    Main WiFi manager function that handles connection and configuration
+    Returns WLAN object if successful, None otherwise
+    """
+    
+    # Try to connect to saved WiFi
+    sta = network.WLAN(network.STA_IF)
+    sta.active(True)
+    
+    saved_ssid = config_manager.get("wifi.ssid", "")
+    saved_password = config_manager.get("wifi.password", "")
+    
+    if saved_ssid and saved_password:
+        print("Connecting to", saved_ssid, "...")
+        sta.connect(saved_ssid, saved_password)
+        
+        # Wait for connection (10 minutes timeout)
+        timeout = 600
+        while timeout > 0 and not sta.isconnected():
+            time.sleep(1)
+            timeout -= 1
+            
+        if sta.isconnected():
+            print("Connected to", saved_ssid)
+            print("IP:", sta.ifconfig()[0])
+            return sta
+    
+    # Connection failed, start AP mode for configuration
+    print("Starting AP mode for configuration...")
+    
+    ap = network.WLAN(network.AP_IF)
+    ap.active(True)
+    
+    ap_ssid = config_manager.get("ap_mode.ssid", "Pi_clock")
+    ap_password = config_manager.get("ap_mode.password", "123456")
+    
+    ap.config(ssid=ap_ssid, password=ap_password)
+    ap.ifconfig(('192.168.4.1', '255.255.255.0', '192.168.4.1', '192.168.4.1'))
+    
     update_display_AP()
-    start_ap_mode()
-    run_web_server()  # 此函式會阻塞，直到使用者設定完畢並重啟 Pico
-
-def main():
-    wlan = wifi_manager()
-    if wlan:
-        print("WiFi 已連線。")
-    else:
-        print("WiFi Manager 模式啟動中，請透過網頁設定 WiFi。")
-
-if __name__ == "__main__":
-    main()
+    
+    print("AP Mode: SSID=" + ap_ssid + ", IP=192.168.4.1")
+    
+    # 啟動 Web 服務器，包含 10 分鐘超時機制
+    run_web_server()
+    
+    return None

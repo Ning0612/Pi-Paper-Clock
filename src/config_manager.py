@@ -14,18 +14,28 @@ class ConfigManager:
         except (OSError, ValueError):
             # If config file doesn't exist or is invalid, return a default structure
             return {
+                "ap_mode": {
+                    "ssid": "Pi_clock",
+                    "password": "123456"
+                },
                 "wifi": {
                     "ssid": "",
                     "password": ""
                 },
                 "weather": {
-                    "location": "Taipei",
-                    "api_key": ""
+                    "api_key": "",
+                    "location": "Taipei"
                 },
                 "user": {
-                    "birthday": "0101",
+                    "birthday": "0612",
                     "light_threshold": 56000,
-                    "image_interval_min": 5
+                    "image_interval_min": 2
+                },
+                "chime": {
+                    "enabled": True,
+                    "interval": "hourly",
+                    "pitch": 880,
+                    "volume": 80
                 }
             }
 
