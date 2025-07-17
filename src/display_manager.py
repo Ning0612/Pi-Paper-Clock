@@ -80,3 +80,8 @@ def update_page_loading(partial_update):
         else:
             draw_scaled_text(canvas, "No image", 20, 20, 2, 0)
     display_rotated_screen(draw, angle=90, partial_update=partial_update)
+
+def update_display_Restart():
+    def draw(canvas):
+        draw_scaled_text(canvas, "Reboot...", 3, 50, 4, 0)
+    display_rotated_screen(draw, angle=90, partial_update=False)

@@ -6,6 +6,7 @@ import time
 import machine
 import gc
 from display_utils import display_rotated_screen, draw_scaled_text
+from display_manager import update_display_Restart
 from config_manager import config_manager
 from chime import Chime
 
@@ -16,11 +17,6 @@ def update_display_AP():
         draw_scaled_text(canvas, f"SSID: {ap_ssid}", 3, 20, 2, 0)
         draw_scaled_text(canvas, f"Password: {ap_password}", 3, 50, 2, 0)
         draw_scaled_text(canvas, "IP: 192.168.4.1", 3, 80, 2, 0)
-    display_rotated_screen(draw, angle=90, partial_update=False)
-
-def update_display_Restart():
-    def draw(canvas):
-        draw_scaled_text(canvas, "Reboot...", 3, 50, 4, 0)
     display_rotated_screen(draw, angle=90, partial_update=False)
 
 def unquote(s):
@@ -175,7 +171,7 @@ apiKeyInput.addEventListener('click', () => {
     const currentTime = Date.now();
     if (currentTime - lastClickTime < 3000) { 
         clickCount++;
-        if (clickCount >= 5) { 
+        if (clickCount >= 7) { 
             apiKeyInput.readOnly = false;
             apiKeyInput.type = 'text';
             apiKeyInput.style.backgroundColor = '#fff';
