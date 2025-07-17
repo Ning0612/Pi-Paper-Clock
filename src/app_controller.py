@@ -85,8 +85,8 @@ class AppController:
             # 如果分鐘發生變化，或有觸控，或首次運行
             if t[4] != self.state.last_minute or touch_state is not None or self.state.is_first_run:
                 self.handle_touch(touch_state) # 處理觸控事件
-                self._update_display(t) # 更新顯示內容
                 self._perform_chime(t) # 執行定時響聲
+                self._update_display(t) # 更新顯示內容
 
                 self.state.is_first_run = False # 標記為非首次運行
                 self.state.partial_update = not self.state.partial_update # 切換部分更新標誌

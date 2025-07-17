@@ -11,24 +11,27 @@ def connect_wifi(ssid, password, timeout=10):
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
     if not wlan.isconnected():
-        print("Wi‑Fi 連線中…")
+        print("Connecting to Wi-Fi...")
         wlan.connect(ssid, password)
         t = timeout
         while not wlan.isconnected() and t:
             time.sleep(1)
             t -= 1
     if wlan.isconnected():
-        print("Wi‑Fi 連線成功，IP:", wlan.ifconfig()[0])
+        print("Wi-Fi connected, IP:", wlan.ifconfig()[0])
     else:
-        print("Wi‑Fi 連線失敗")
+        print("Wi-Fi connection failed")
     return wlan
 
 def sync_time():
+    if not network.WLAN(network.STA_IF).isconnected():
+        print("Not connected to the internet, skipping time synchronization.")
+        return
     try:
         ntptime.settime()
-        print("時間同步成功")
+        print("Time synchronized successfully")
     except Exception as e:
-        print("時間同步失敗:", e)
+        print(f"Time synchronization failed: {e}")
 
 def get_local_time(offset=8*3600+5):
     t = time.localtime()
@@ -45,7 +48,7 @@ def save_wifi_config(ssid, password, location):
     config_manager.set("wifi.ssid", ssid)
     config_manager.set("wifi.password", password)
     config_manager.set("weather.location", location)
-    print("Wi‑Fi 設定已儲存")
+    print("Wi-Fi settings saved")
 
 def wifi_manager_connect():
     """根據 config.json 嘗試連線 Wi‑Fi，若有設定則返回 WLAN 物件，否則返回 None"""

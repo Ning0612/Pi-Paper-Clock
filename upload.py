@@ -20,17 +20,22 @@ def run_command(command, ignore_exists_error=False, display_output=False, captur
     :param capture_output_only: 如果為 True，則只返回 stdout 內容，不列印也不檢查錯誤。
     """
     try:
-        # always capture output to control display
-        result = subprocess.run(command, check=not capture_output_only, capture_output=True, text=True, encoding='utf-8')
+        # 關鍵修改：將 encoding 從 'utf-8' 改為 'latin-1'，以便處理所有單一字節的數據
+        # 這有助於避免 UnicodeDecodeError，特別是當裝置輸出非標準字元時
+        result = subprocess.run(command, check=not capture_output_only, capture_output=True, text=True, encoding='latin-1') 
         
         if capture_output_only:
             return result.stdout.strip()
 
-        if display_output and result.stdout.strip():
-            print(result.stdout.strip())
-        if display_output and result.stderr.strip():
-            if not (ignore_exists_error and "File exists" in result.stderr):
-                print(f"[stderr] {result.stderr.strip()}")
+        # 確保 result.stdout 不是 None 才進行 strip() 操作
+        stdout_str = result.stdout.strip() if result.stdout else ""
+        stderr_str = result.stderr.strip() if result.stderr else ""
+
+        if display_output and stdout_str:
+            print(stdout_str)
+        if display_output and stderr_str:
+            if not (ignore_exists_error and "File exists" in stderr_str):
+                print(f"[stderr] {stderr_str}")
         return True
     except FileNotFoundError:
         if display_output:
@@ -43,6 +48,10 @@ def run_command(command, ignore_exists_error=False, display_output=False, captur
             print(f"❌ 指令失敗：{' '.join(command)}")
             print(f"[stdout]\n{e.stdout.strip()}")
             print(f"[stderr]\n{e.stderr.strip()}")
+        return False
+    except Exception as e: # 捕獲其他潛在異常，例如 UnicodeDecodeError (雖然已改 encoding 但仍可作為備用)
+        if display_output:
+            print(f"❌ 執行命令時發生意外錯誤: {e}")
         return False
 
 
@@ -83,7 +92,7 @@ def ensure_remote_dirs(path):
             continue
         current = f"{current}/{part}" if current else part
         # 執行 mkdir 但不顯示其輸出，因為我們在主迴圈控制顯示
-        subprocess.run(base_cmd + ["fs", "mkdir", f":{current}"], capture_output=True, text=True, encoding='utf-8')
+        subprocess.run(base_cmd + ["fs", "mkdir", f":{current}"], capture_output=True, text=True, encoding='latin-1') # 這裡也改為 latin-1
 
 
 def _clear_current_line():
@@ -109,7 +118,8 @@ def clean_device():
     base_cmd = get_mpremote_base()
 
     # Recursively list all files from the root directory
-    proc = subprocess.run(base_cmd + ["fs", "ls", "-r", ":"], capture_output=True, text=True, encoding='utf-8')
+    # 這裡也改為 latin-1
+    proc = subprocess.run(base_cmd + ["fs", "ls", "-r", ":"], capture_output=True, text=True, encoding='latin-1')
     if proc.returncode != 0:
         print("Warning: Could not list files. Maybe device is empty or not connected.")
         return
@@ -150,8 +160,69 @@ def reset_device():
     _clear_current_line() # 清除當前可能的進度條
     print("\n🔄 重啟裝置...")
     base_cmd = get_mpremote_base()
+    # 這裡也改為 latin-1
     run_command(base_cmd + ["reset"], display_output=True) # 顯示 reset 命令的輸出
 
+def get_device_space_info():
+    """
+    獲取裝置的總空間、使用空間和剩餘可用空間。
+    """
+    _clear_current_line() # 清除當前可能的進度條
+    print("\n📊 獲取裝置空間資訊...")
+    base_cmd = get_mpremote_base()
+    
+    # 執行 mpremote fs df 並捕獲輸出
+    df_output = run_command(base_cmd + ["fs", "df"], capture_output_only=True)
+
+    if not df_output:
+        print("❌ 無法獲取裝置空間資訊。")
+        print("請檢查裝置是否已連接並可被 mpremote 偵測到。") # 新增提示
+        return
+
+    # *** 新增：列印 mpremote fs df 的原始輸出，以利診斷 ***
+    print("\n--- mpremote fs df 原始輸出 ---")
+    print(df_output)
+    print("-------------------------------\n")
+    # *************************************************
+
+    # 解析 df_output
+    # 預期輸出格式類似:
+    # Filesystem                  1K-blocks      Used  Available Use% Mounted on
+    # <block_device_name>              xxxx      yyyy       zzzz   xx% /flash
+    lines = df_output.splitlines()
+    if len(lines) < 2:
+        print("❌ 無法解析裝置空間資訊。輸出行數不足。") # 修改提示
+        return
+
+    data_line = lines[1].strip() # 假設資料在第二行
+    parts = data_line.split()
+
+    if len(parts) >= 5:
+        try:
+            total_blocks = int(parts[1]) * 1024 # 轉換為 Bytes
+            used_blocks = int(parts[2]) * 1024 # 轉換為 Bytes
+            available_blocks = int(parts[3]) * 1024 # 轉換為 Bytes
+
+            def format_bytes(size):
+                # 格式化 Bytes 為更易讀的單位 (KB, MB)
+                if size < 1024:
+                    return f"{size} B"
+                elif size < 1024 * 1024:
+                    return f"{size / 1024:.2f} KB"
+                else:
+                    return f"{size / (1024 * 1024):.2f} MB"
+
+            print(f"總空間: {format_bytes(total_blocks)}")
+            print(f"使用空間: {format_bytes(used_blocks)}")
+            print(f"剩餘可用空間: {format_bytes(available_blocks)}")
+        except ValueError:
+            print("❌ 解析裝置空間數值時發生錯誤。")
+            print(f"嘗試解析的行: '{data_line}'") # 顯示哪一行導致解析失敗
+    else:
+        print(f"❌ 無法解析裝置空間資訊的格式。預期的列數不足。實際列數: {len(parts)}") # 修改提示
+        print(f"嘗試解析的行: '{data_line}'") # 顯示哪一行導致解析失敗
+
+    print("") # 顯示完資訊後換行
 
 def upload_files():
     base_cmd = get_mpremote_base()
@@ -189,6 +260,9 @@ def upload_files():
     _clear_current_line() # 上傳完成後，清空最後一行進度條
     print("\n✅ 上傳完成。你可以使用 `mpremote repl` 進入裝置。") 
     
+    # 在這裡顯示裝置空間資訊
+    get_device_space_info() # 新增的函式呼叫
+
     reset_device()
 
     print("等待裝置重啟並初始化...")
@@ -196,6 +270,7 @@ def upload_files():
 
     _clear_current_line() # 清除可能的舊進度條
     print("\n🖥️ 連接到裝置 Terminal (REPL)... 按 Ctrl+X 退出。")
+    # 這裡也改為 latin-1
     run_command(base_cmd + ["repl"], display_output=True) # repl 命令的輸出需要直接顯示
 
 

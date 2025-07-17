@@ -62,7 +62,7 @@ def rotate_buffer(src, src_width, src_height, angle):
     elif angle == 270:
         return rotate_buffer_270(src, src_width, src_height)
     else:
-        raise ValueError("不支援的旋轉角度")
+        raise ValueError("Unsupported rotation angle")
 
 def draw_scaled_text(canvas, text, x, y, scale, color=0):
     orig_char_width = 8
@@ -96,13 +96,15 @@ def draw_image(canvas, image_path, src_width, src_height, x, y):
         with open(image_path, "rb") as f:
             img_data = f.read()
         expected_length = (src_width * src_height) // 8
-        if len(img_data) < expected_length:
-            print("圖片資料長度不足，預期長度:", expected_length)
+        if len(img_data) != expected_length:
+            print(f"圖片資料長度不符: {image_path}。預期長度: {expected_length}, 實際長度: {len(img_data)}")
             return
         img_fb = framebuf.FrameBuffer(bytearray(img_data), src_width, src_height, framebuf.MONO_HLSB)
         canvas.blit(img_fb, x, y)
+    except OSError as e:
+        print(f"讀取圖片檔案失敗: {image_path} - {e}")
     except Exception as e:
-        print("讀取圖片失敗:", e)
+        print(f"處理圖片時發生未知錯誤: {image_path} - {e}")
 
 def clear_region(canvas, x1, y1, x2, y2):
     width = x2 - x1

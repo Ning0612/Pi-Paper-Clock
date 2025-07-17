@@ -15,7 +15,7 @@ def list_files(directory):
         # 回傳不含副檔名的檔名
         return [f.split('.')[0] for f in files if not is_directory("{}/{}".format(directory, f))]
     except Exception as e:
-        print("列出檔案錯誤:", e)
+        print(f"Error listing files: {e}")
         return []
 
 def shuffle_files(file_list):
