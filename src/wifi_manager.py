@@ -91,6 +91,7 @@ def generate_html_page(networks):
         "birthday": config_manager.get("user.birthday", "0101"),
         "image_interval_min": config_manager.get("user.image_interval_min", 2),
         "light_threshold": config_manager.get("user.light_threshold", 56000),
+        "timezone_offset": config_manager.get("user.timezone_offset", 8),
         "chime_enabled": "checked" if config_manager.get("chime.enabled", False) else "",
         "chime_interval_hourly": "selected" if config_manager.get("chime.interval") == "hourly" else "",
         "chime_interval_half": "selected" if config_manager.get("chime.interval") == "half_hourly" else "",
@@ -151,6 +152,7 @@ input[type='checkbox']{width:auto;margin-right:.5rem;transform:scale(1.2);accent
 <fieldset><legend>系統設定</legend>
 <div class="form-group"><label for="image_interval_min">圖片輪播間隔 (分鐘):</label><input type="number" id="image_interval_min" name="image_interval_min" value=\"""" + str(vals['image_interval_min']) + """\"></div>
 <div class="form-group"><label for="light_threshold">光感臨界值 (ADC):</label><input type="number" id="light_threshold" name="light_threshold" value=\"""" + str(vals['light_threshold']) + """\"><p class="info">目前光感值: <span class="adc-value" id="adc-value">""" + str(vals['adc_value']) + """</span> (建議取開燈時的值再稍微大一點)</p></div>
+<div class="form-group"><label for="timezone_offset">時區偏移 (小時):</label><input type="number" id="timezone_offset" name="timezone_offset" value=\"""" + str(config_manager.get("user.timezone_offset", 8)) + """\"></div>
 </fieldset>
 
 <fieldset><legend>定時響聲</legend>
@@ -340,7 +342,8 @@ def run_web_server():
                                 "user": {
                                     "birthday": new_birthday,
                                     "light_threshold": 56000,
-                                    "image_interval_min": 2
+                                    "image_interval_min": 2,
+                                    "timezone_offset": 8
                                 },
                                 "chime": {
                                     "enabled": "chime_enabled" in params,
@@ -361,6 +364,11 @@ def run_web_server():
                             except (ValueError, TypeError):
                                 config_data["user"]["image_interval_min"] = 2
 
+                            try:
+                                 config_data["user"]["timezone_offset"] = int(params.get("timezone_offset", "8"))
+                            except (ValueError, TypeError):
+                                config_data["user"]["timezone_offset"] = 8
+                            
                             try:
                                 config_data["chime"]["pitch"] = int(params.get("chime_pitch", "880"))
                             except (ValueError, TypeError):
@@ -441,6 +449,10 @@ legend{font-weight:600;padding:0 .5rem;color:#03d3fc}
 <div class="config-item">
 <span class="config-label">光感臨界值:</span>
 <span class="config-value">""" + str(config_data["user"]["light_threshold"]) + """</span>
+</div>
+<div class="config-item">
+<span class="config-label">時區偏移:</span>
+<span class="config-value">""" + str(config_data["user"]["timezone_offset"]) + """ 小時</span>
 </div>
 </fieldset>
 

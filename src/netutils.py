@@ -33,7 +33,7 @@ def sync_time():
     except Exception as e:
         print(f"Time synchronization failed: {e}")
 
-def get_local_time(offset=8*3600+5):
+def get_local_time(offset=8*3600):
     t = time.localtime()
     seconds = time.mktime(t) + offset
     return time.localtime(seconds)

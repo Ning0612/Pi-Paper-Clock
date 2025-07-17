@@ -16,6 +16,7 @@ class AppController:
         self.chime = Chime(20) if config_manager.get('chime.enabled') else None
         self.location = config_manager.get("weather.location", "Taipei") # 從設定檔獲取天氣地點
         self.api_key = config_manager.get("weather.api_key") # 從設定檔獲取天氣 API 金鑰
+        self.time_zone_offset = config_manager.get("user.timezone_offset", 8) # 從設定檔獲取時區偏移
 
         # 新增：用於按鈕長按判斷的屬性
         # 儲存每個按鈕的按下時間戳記
@@ -68,7 +69,7 @@ class AppController:
     def run_main_loop(self):
         adc_value = self.hw.get_adc_value() # 獲取 ADC 值 (光線感測器)
         touch_state = self.hw.get_touch_state() # 獲取觸控狀態
-        t = get_local_time() # 獲取當前本地時間
+        t = get_local_time(offset=self.time_zone_offset*3600) # 獲取當前本地時間
 
         if touch_state: # 如果有觸控事件發生
             self.state.last_touch_time = time.time() # 更新最後觸控時間
@@ -110,7 +111,7 @@ class AppController:
         if t[4] % 3 == 0 or self.state.is_first_run: # 每 3 分鐘或首次運行時獲取當前天氣
             self.state.current_weather = fetch_current_weather(self.api_key, self.location)
         if t[4] % 30 == 0 or self.state.is_first_run: # 每 30 分鐘或首次運行時獲取天氣預報
-            self.state.weather_forecast = fetch_weather_forecast(self.api_key, self.location)
+            self.state.weather_forecast = fetch_weather_forecast(self.api_key, self.location, days_limit=4, timezone_offset=self.time_zone_offset)
 
         # 如果天氣資料獲取失敗，嘗試再次獲取 (fallback 機制)
         if not self.state.current_weather:
@@ -121,13 +122,13 @@ class AppController:
         # 頁面渲染邏輯
         # 如果是生日，顯示生日頁面
         if config_manager.get("user.birthday") == f"{t[1]:02d}{t[2]:02d}":
-            update_page_birthday(self.state.partial_update)
+            update_page_birthday(self.state.partial_update, t)
         # 如果有當前天氣資料，顯示天氣頁面
         elif self.state.current_weather:
-            update_page_weather(self.state.current_weather, self.state.weather_forecast, self.state.display_image_path, self.state.partial_update)
+            update_page_weather(self.state.current_weather, self.state.weather_forecast, self.state.display_image_path, self.state.partial_update, t)
         # 否則，顯示時間和圖片頁面
         else:
-            update_page_time_image(self.state.display_image_path, self.state.partial_update)
+            update_page_time_image(self.state.display_image_path, self.state.partial_update, t)
 
     def _perform_chime(self, t):
         # 如果蜂鳴器已啟用

@@ -12,16 +12,15 @@
     "location": "Taipei"
   },
   "user": {
-    "birthday": "0101"
-  },
-  "display": {
-    "light_threshold": 50000,
-    "image_interval_min": 2
+    "birthday": "0101",
+    "light_threshold": 40000,
+    "image_interval_min": 2,
+    "timezone_offset": 8
   },
   "chime": {
     "enabled": true,
     "interval": "hourly",
-    "pitch" : 1200 ,
+    "pitch": 2400,
     "volume": 80
   }
 }

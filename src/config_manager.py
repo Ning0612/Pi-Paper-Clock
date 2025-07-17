@@ -29,7 +29,8 @@ class ConfigManager:
                 "user": {
                     "birthday": "0612",
                     "light_threshold": 56000,
-                    "image_interval_min": 2
+                    "image_interval_min": 2,
+                    "timezone_offset": 8
                 },
                 "chime": {
                     "enabled": True,

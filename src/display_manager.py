@@ -3,9 +3,8 @@ from display_utils import draw_scaled_text, draw_image, display_rotated_screen
 from netutils import get_local_time
 from file_manager import list_files, get_image_path
 
-def update_page_weather(current_weather, weather_forecast, display_image_path, partial_update):
+def update_page_weather(current_weather, weather_forecast, display_image_path, partial_update, t):
     def draw(canvas):
-        t = get_local_time()
         date_str = "{:02d}/{:02d}".format(t[1], t[2])
         time_str = "{:02d}:{:02d}".format(t[3], t[4])
         
@@ -38,9 +37,8 @@ def update_page_weather(current_weather, weather_forecast, display_image_path, p
         
     display_rotated_screen(draw, angle=90, partial_update=partial_update)
 
-def update_page_time_image(display_image_path, partial_update):
+def update_page_time_image(display_image_path, partial_update, t):
     def draw(canvas):
-        t = get_local_time()
         date_str = "{:02d}/{:02d}".format(t[1], t[2])
         time_str = "{:02d}:{:02d}".format(t[3], t[4])
         draw_scaled_text(canvas, date_str, 3, 20, 4, 0)
@@ -49,9 +47,8 @@ def update_page_time_image(display_image_path, partial_update):
     display_rotated_screen(draw, angle=90, partial_update=partial_update)
 
 
-def update_page_birthday(partial_update):
+def update_page_birthday(partial_update, t):
     def draw(canvas):
-        t = get_local_time()
         date_str = "{:02d}/{:02d}".format(t[1], t[2])
         time_str = "{:02d}:{:02d}".format(t[3], t[4])
         draw_scaled_text(canvas, date_str, 3, 10, 4, 0)

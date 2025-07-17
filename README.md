@@ -127,8 +127,9 @@
 | `api_key`           | openweathermap API key  | 字串   | `""`     |
 | `location`          | 天氣地點                 | 字串   | `"Taipei"`     |
 | `birthday`          | 生日日期（MMDD）         | 字串   | `"0612"`       |
-| `light_threshold`   | ADC 光感臨界值           | 整數   | `56000`        |
-| `image_interval_min`| 圖片換圖間隔（分鐘）     | 整數   | `2`            |
+| `user.timezone_offset`| UTC 時間偏移量（小時）   | 數字   | `8`            |
+| `user.light_threshold`| ADC 光感臨界值           | 整數   | `56000`        |
+| `user.image_interval_min`| 圖片換圖間隔（分鐘）     | 整數   | `2`            |
 | `chime.enabled`     | 啟用定時響聲             | 布林值 | `true`         |
 | `chime.interval`    | 響聲間隔（整點／半小時）  | 字串   | `"hourly"`     |
 | `chime.pitch`       | 音調（頻率，300 ~ 3k Hz） | 整數   | `80`           |

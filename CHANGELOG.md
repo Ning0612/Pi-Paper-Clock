@@ -5,6 +5,23 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)，
 且本專案遵循 [Semantic Versioning](https://semver.org/spec/v2.0.0.html)。
 
+## [1.2.0] - 2025-07-18
+
+### 新增功能 (Added)
+- **時區設定功能**：
+  - 新增 `timezone_offset` 設定，允許使用者根據所在地區設定 UTC 時間偏移（-12 到 +14 小時）。
+  - 可於 `config.json` 或 AP 模式設定頁面中進行設定。
+  - 主畫面時間與天氣預報將根據此偏移量顯示正確的本地時間。
+
+### 變更與重構 (Changed)
+- **天氣模組記憶體優化**：
+  - 重構 `weather.py` 中的天氣預報功能 (`fetch_weather_forecast`)，採用分段處理 JSON 資料的方式，大幅降低記憶體使用量，解決在記憶體有限的 Pico W 上可能發生的 `MemoryError`。
+  - 增強 `_make_request_with_retry` 的錯誤處理，加入 `OSError` 和 `MemoryError` 的捕獲，並在請求前後手動觸發垃圾回收 (`gc.collect()`)。
+- **設定檔結構調整**：
+  - 在 `config.json` 中，將 `light_threshold` 和 `image_interval_min` 移至 `user` 物件下，使設定檔結構更清晰。
+- **程式碼邏輯優化**：
+  - `display_manager.py` 中的畫面更新函數現在直接接收時間物件，避免重複呼叫 `get_local_time()`。
+
 ## [1.1.0] - 2025-07-17
 
 ### 新增功能 (Added)
