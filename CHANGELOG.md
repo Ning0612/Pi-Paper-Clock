@@ -37,4 +37,15 @@
   - 修正 `wifi_manager.py` 中 `success_page_template` 因 CSS 樣式中的 `{}` 未正確跳脫導致的 `KeyError: 'font-family'` 錯誤。
 - **穩定性提升**：
   - 增強了 Wi-Fi 連線、天氣 API 請求及圖片載入時的錯誤處理機制，加入重試與 fallback 邏輯。
-  - 移除 `chime.py` 中不再使用的 `test_chime` 函數.
+  - 移除 `chime.py` 中不再使用的 `test_chime` 函數。
+  - **網路與檔案操作穩定性強化**：
+    - 為天氣 API 請求 (於 `src/weather.py`) 實作了更穩健的重試機制，並改進了錯誤日誌，同時確保在無網路連線時跳過請求。
+    - 在 NTP 時間同步 (於 `src/netutils.py`) 前增加網路連線檢查。
+    - 改進了圖片載入 (於 `src/display_utils.py` 和 `src/file_manager.py`) 的錯誤處理，並將錯誤訊息翻譯為英文。
+  - **`NoneType` 錯誤修正**：強化了 `urequests` 回應物件可能為 `None` 的錯誤處理邏輯，確保安全地關閉回應物件。
+- **錯誤修正**：
+  - 修正 `wifi_manager.py` 中 `success_page_template` 因 CSS 樣式中的 `{}` 未正確跳脫導致的 `KeyError: 'font-family'` 錯誤。
+  - **訊息統一**：所有 `print` 訊息皆已轉換為英文。
+- **內部邏輯調整**：
+  - `src/app_controller.py` 中 `_perform_chime` 的呼叫順序調整。
+  - `upload.py` 處理了 `UnicodeDecodeError` 並新增了顯示設備空間資訊的功能。

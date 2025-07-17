@@ -108,23 +108,32 @@ def generate_html_page(networks):
 
     html = """HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n
 <!DOCTYPE html>
-<html lang="zh-TW"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Pico Clock 設定</title>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pico Clock 設定</title>
 <style>
-body{margin:0;padding:1rem;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,Cantarell,'Open Sans','Helvetica Neue',sans-serif;background-color:#e0f7fa;color:#333;}
-.container{max-width:600px;margin:auto;background-color:#fff;padding:1.5rem;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);}
-h1{text-align:center;color:#00796b;margin-bottom:1.5rem;}
-fieldset{border:1px solid #00bcd4;border-radius:6px;padding:1rem;margin-bottom:1rem;background-color:#e0f2f7;}
-legend{font-weight:600;padding:0 .5rem;color:#00796b;}
-label{display:block;font-weight:500;margin-bottom:.5rem;color:#004d40;}
-input,select{width:100%;padding:0.75rem;box-sizing:border-box;border:1px solid #00bcd4;border-radius:6px;font-size:1rem;background-color:#f5f5f5;}
-input[type='checkbox']{width:auto;margin-right:.5rem;}
-.form-group{margin-bottom:1rem;}
-.info{font-size:.9rem;color:#004d40;margin-top:.25rem;}
-.submit-btn{width:100%;padding:1rem;font-size:1.1rem;font-weight:bold;color:#fff;background-color:#03dbfc;border:none;border-radius:6px;cursor:pointer;transition:background-color .2s;}
-.submit-btn:hover{background-color:#02b8d4;}
-.hidden{display:none;}
+body{margin:0;padding:1rem;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f0f8ff;color:#333}
+.container{max-width:600px;margin:auto;background:#fff;padding:1.5rem;border-radius:12px;box-shadow:0 4px 20px rgba(3,211,252,0.15)}
+h1{text-align:center;color:#03d3fc;margin-bottom:1.5rem;font-size:2rem}
+fieldset{border:2px solid #03d3fc;border-radius:8px;padding:1rem;margin-bottom:1rem;background:#f9fdff}
+legend{font-weight:600;padding:0 .5rem;color:#03d3fc}
+label{display:block;font-weight:500;margin-bottom:.5rem;color:#333}
+input,select{width:100%;padding:0.75rem;box-sizing:border-box;border:1px solid #03d3fc;border-radius:6px;font-size:1rem;background:#fff}
+input:focus,select:focus{border-color:#02b8d4;outline:none;box-shadow:0 0 0 2px rgba(3,211,252,0.2)}
+input[type='checkbox']{width:auto;margin-right:.5rem;transform:scale(1.2);accent-color:#03d3fc}
+.form-group{margin-bottom:1rem}
+.info{font-size:.9rem;color:#666;margin-top:.25rem;padding:0.5rem;background:#e6f9ff;border-radius:4px}
+.submit-btn{width:100%;padding:1rem;font-size:1.1rem;font-weight:bold;color:#fff;background:#03d3fc;border:none;border-radius:6px;cursor:pointer;transition:all .2s}
+.submit-btn:hover{background:#02b8d4;transform:translateY(-1px)}
+.test-btn{width:100%;padding:0.75rem;font-size:1rem;font-weight:bold;color:#fff;background:#ff9800;border:none;border-radius:6px;cursor:pointer;transition:all .2s;margin-top:0.5rem}
+.test-btn:hover{background:#e68900}
+.adc-value{font-weight:bold;color:#03d3fc}
 </style>
-</head><body><div class="container">
+</head>
+<body>
+<div class="container">
 <h1>Pico Clock 設定</h1>
 <form action="/" method="get">
 
@@ -141,14 +150,14 @@ input[type='checkbox']{width:auto;margin-right:.5rem;}
 
 <fieldset><legend>系統設定</legend>
 <div class="form-group"><label for="image_interval_min">圖片輪播間隔 (分鐘):</label><input type="number" id="image_interval_min" name="image_interval_min" value=\"""" + str(vals['image_interval_min']) + """\"></div>
-<div class="form-group"><label for="light_threshold">光感臨界值 (ADC):</label><input type="number" id="light_threshold" name="light_threshold" value=\"""" + str(vals['light_threshold']) + """\"><p class="info">目前光感值: <span id="adc-value">""" + str(vals['adc_value']) + """</span> (建議取開燈時的值再稍微大一點)</p></div>
+<div class="form-group"><label for="light_threshold">光感臨界值 (ADC):</label><input type="number" id="light_threshold" name="light_threshold" value=\"""" + str(vals['light_threshold']) + """\"><p class="info">目前光感值: <span class="adc-value" id="adc-value">""" + str(vals['adc_value']) + """</span> (建議取開燈時的值再稍微大一點)</p></div>
 </fieldset>
 
 <fieldset><legend>定時響聲</legend>
 <div class="form-group" style="display:flex;align-items:center;"><input type="checkbox" id="chime_enabled" name="chime_enabled" value="true" """ + vals['chime_enabled'] + """><label for="chime_enabled" style="margin-bottom:0;">啟用定時響聲</label></div>
 <div class="form-group"><label for="chime_interval">響聲間隔:</label><select id="chime_interval" name="chime_interval"><option value="hourly" """ + vals['chime_interval_hourly'] + """>每小時</option><option value="half_hourly" """ + vals['chime_interval_half'] + """>每半小時</option></select></div>
 <div class="form-group"><label for="chime_pitch">音高 (Hz):</label><input type="number" id="chime_pitch" name="chime_pitch" value=\"""" + str(vals['chime_pitch']) + """\"></div>
-<div class="form-group"><label for="chime_volume">音量 (0-100):</label><input type="number" id="chime_volume" name="chime_volume" value=\"""" + str(vals['chime_volume']) + """\"><button type="button" onclick="testChime()" style="width:100%;padding:0.75rem;font-size:1rem;font-weight:bold;color:#fff;background-color:#00bcd4;border:none;border-radius:6px;cursor:pointer;transition:background-color .2s;margin-top:0.5rem;">測試響聲</button></div>
+<div class="form-group"><label for="chime_volume">音量 (0-100):</label><input type="number" id="chime_volume" name="chime_volume" value=\"""" + str(vals['chime_volume']) + """\"><button type="button" class="test-btn" onclick="testChime()">測試響聲</button></div>
 </fieldset>
 
 <fieldset><legend>AP 模式設定</legend>
@@ -157,7 +166,8 @@ input[type='checkbox']{width:auto;margin-right:.5rem;}
 </fieldset>
 
 <button type="submit" class="submit-btn">儲存設定並重啟</button>
-</form></div>
+</form>
+</div>
 
 <script>
 let clickCount = 0;
@@ -188,7 +198,9 @@ setInterval(updateAdc,3000);
 document.getElementById('chime_pitch').addEventListener('change',testChime);
 document.getElementById('chime_volume').addEventListener('change',testChime);
 });
-</script></body></html>"""
+</script>
+</body>
+</html>"""
     return html
 
 def run_web_server():
@@ -280,7 +292,6 @@ def run_web_server():
                     continue
                 
                 # 處理配置表單提交
-                # 處理配置表單提交
                 if "GET /?" in request and "ssid=" in request:
                     print("Processing configuration form...")
 
@@ -366,63 +377,120 @@ def run_web_server():
                                 ujson.dump(config_data, f)
                             print("Configuration saved successfully!")
 
-                            # Prepare data for success page, masking sensitive info
-                            display_config = {
-                                "wifi_ssid": config_data["wifi"]["ssid"],
-                                "location": config_data["weather"]["location"],
-                                "birthday": config_data["user"]["birthday"],
-                                "light_threshold": config_data["user"]["light_threshold"],
-                                "image_interval_min": config_data["user"]["image_interval_min"],
-                                "chime_enabled": "是" if config_data["chime"]["enabled"] else "否",
-                                "chime_interval": "每小時" if config_data["chime"]["interval"] == "hourly" else "每半小時",
-                                "chime_pitch": config_data["chime"]["pitch"],
-                                "chime_volume": config_data["chime"]["volume"],
-                                "ap_mode_ssid": config_data["ap_mode"]["ssid"]
-                            }
-
-                            success_page_template = """HTTP/1.0 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n
+                            # 使用和設定頁面相同樣式的成功頁面
+                            success_page = """HTTP/1.0 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n
 <html>
 <head>
-  <meta charset=\"utf-8\">
-  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
-  <title>設定進行中</title>
-  <style>
-    body {{ font-family: Arial, sans-serif; padding: 20px; margin: 0; background-color: #f4f4f4; text-align: center; }}
-    .container {{ background: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); display: inline-block; margin-top: 50px; max-width: 400px; }}
-    h1 {{ color: #00796b; margin-bottom: 20px; }}
-    p {{ color: #666; font-size: 16px; line-height: 1.5; }}
-    .progress {{ width: 100%; height: 4px; background-color: #e0e0e0; border-radius: 2px; margin: 20px 0; overflow: hidden; }}
-    .progress-bar {{ width: 100%; height: 100%; background-color: #00796b; border-radius: 2px; animation: progress 5s ease-in-out forwards; }}
-    @keyframes progress {{ to {{ width: 100%; }} }}
-    .config-details {{ text-align: left; margin-top: 20px; border-top: 1px solid #eee; padding-top: 15px; }}
-    .config-details p {{ margin: 5px 0; }}
-    .config-details strong {{ color: #004d40; }}
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>設定完成</title>
+<style>
+body{margin:0;padding:1rem;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f0f8ff;color:#333}
+.container{max-width:600px;margin:auto;background:#fff;padding:1.5rem;border-radius:12px;box-shadow:0 4px 20px rgba(3,211,252,0.15)}
+h1{text-align:center;color:#03d3fc;margin-bottom:1.5rem;font-size:2rem}
+.success-msg{text-align:center;margin-bottom:1.5rem;color:#666;font-size:1.1rem}
+.progress{width:100%;height:8px;background:#e0e0e0;border-radius:4px;margin:1.5rem 0;overflow:hidden}
+.progress-bar{width:0%;height:100%;background:#03d3fc;border-radius:4px;animation:progress 5s ease-in-out forwards}
+@keyframes progress{to{width:100%}}
+fieldset{border:2px solid #03d3fc;border-radius:8px;padding:1rem;margin-bottom:1rem;background:#f9fdff}
+legend{font-weight:600;padding:0 .5rem;color:#03d3fc}
+.config-item{margin-bottom:0.8rem;display:flex;justify-content:space-between;align-items:center}
+.config-item:last-child{margin-bottom:0}
+.config-label{font-weight:500;color:#333}
+.config-value{color:#03d3fc;font-weight:600}
+.countdown{text-align:center;margin-top:1rem;color:#666;font-size:1.1rem}
+</style>
 </head>
 <body>
-  <div class=\"container\">
-    <h1>Pico Clock 設定完成</h1>
-    <p>設定已成功儲存，系統將在 5 秒後重新啟動。</p>
-    <div class=\"progress\"><div class=\"progress-bar\"></div></div>
-    <div class=\"config-details\">
-      <h2>已儲存的設定:</h2>
-      <p><strong>Wi-Fi SSID:</strong> {wifi_ssid}</p>
-      <p><strong>天氣地點:</strong> {location}</p>
-      <p><strong>生日:</strong> {birthday}</p>
-      <p><strong>光感臨界值:</strong> {light_threshold}</p>
-      <p><strong>圖片輪播間隔:</strong> {image_interval_min} 分鐘</p>
-      <p><strong>定時響聲啟用:</strong> {chime_enabled}</p>
-      <p><strong>響聲間隔:</strong> {chime_interval}</p>
-      <p><strong>音高:</strong> {chime_pitch} Hz</p>
-      <p><strong>音量:</strong> {chime_volume}</p>
-      <p><strong>AP 模式 SSID:</strong> {ap_mode_ssid}</p>
-    </div>
-    <p>請稍候...</p>
-  </div>
+<div class="container">
+<h1>設定完成</h1>
+<p class="success-msg">您的 Pico Clock 設定已成功儲存！系統將在 <span id="countdown">5</span> 秒後重新啟動。</p>
+<div class="progress"><div class="progress-bar"></div></div>
+
+<fieldset><legend>Wi-Fi 連線設定</legend>
+<div class="config-item">
+<span class="config-label">網路名稱:</span>
+<span class="config-value">""" + config_data["wifi"]["ssid"] + """</span>
+</div>
+<div class="config-item">
+<span class="config-label">密碼狀態:</span>
+<span class="config-value">""" + ("已設定" if config_data["wifi"]["password"] else "未設定") + """</span>
+</div>
+</fieldset>
+
+<fieldset><legend>天氣與個人化設定</legend>
+<div class="config-item">
+<span class="config-label">API Key:</span>
+<span class="config-value">""" + ("已設定" if config_data["weather"]["api_key"] else "未設定") + """</span>
+</div>
+<div class="config-item">
+<span class="config-label">天氣地點:</span>
+<span class="config-value">""" + config_data["weather"]["location"] + """</span>
+</div>
+<div class="config-item">
+<span class="config-label">生日設定:</span>
+<span class="config-value">""" + config_data["user"]["birthday"] + """</span>
+</div>
+</fieldset>
+
+<fieldset><legend>系統設定</legend>
+<div class="config-item">
+<span class="config-label">圖片輪播間隔:</span>
+<span class="config-value">""" + str(config_data["user"]["image_interval_min"]) + """ 分鐘</span>
+</div>
+<div class="config-item">
+<span class="config-label">光感臨界值:</span>
+<span class="config-value">""" + str(config_data["user"]["light_threshold"]) + """</span>
+</div>
+</fieldset>
+
+<fieldset><legend>定時響聲設定</legend>
+<div class="config-item">
+<span class="config-label">響聲功能:</span>
+<span class="config-value">""" + ("啟用" if config_data["chime"]["enabled"] else "停用") + """</span>
+</div>
+<div class="config-item">
+<span class="config-label">響聲間隔:</span>
+<span class="config-value">""" + ("每小時" if config_data["chime"]["interval"] == "hourly" else "每半小時") + """</span>
+</div>
+<div class="config-item">
+<span class="config-label">音調頻率:</span>
+<span class="config-value">""" + str(config_data["chime"]["pitch"]) + """ Hz</span>
+</div>
+<div class="config-item">
+<span class="config-label">音量大小:</span>
+<span class="config-value">""" + str(config_data["chime"]["volume"]) + """</span>
+</div>
+</fieldset>
+
+<fieldset><legend>AP 模式設定</legend>
+<div class="config-item">
+<span class="config-label">AP 模式名稱:</span>
+<span class="config-value">""" + config_data["ap_mode"]["ssid"] + """</span>
+</div>
+<div class="config-item">
+<span class="config-label">AP 密碼狀態:</span>
+<span class="config-value">""" + ("已設定" if config_data["ap_mode"]["password"] else "未設定") + """</span>
+</div>
+</fieldset>
+
+<div class="countdown">系統正在重新啟動中...</div>
+</div>
+
+<script>
+let timeLeft = 5;
+const countdownElement = document.getElementById('countdown');
+const timer = setInterval(() => {
+timeLeft--;
+countdownElement.textContent = timeLeft;
+if (timeLeft <= 0) {
+clearInterval(timer);
+countdownElement.textContent = '重新啟動中...';
+}
+}, 1000);
+</script>
 </body>
-</html>
-"""
-                            success_page = success_page_template.format(**display_config)
+</html>"""
 
                             try:
                                 cl.send(success_page.encode())
