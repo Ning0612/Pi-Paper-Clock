@@ -7,6 +7,7 @@ import machine
 import gc
 from display_utils import display_rotated_screen, draw_scaled_text
 from config_manager import config_manager
+from chime import Chime
 
 def update_display_AP():
     def draw(canvas):
@@ -111,7 +112,7 @@ def generate_html_page(networks):
 
     html = """HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n
 <!DOCTYPE html>
-<html lang="zh-TW"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Pico 時鐘設定</title>
+<html lang="zh-TW"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Pico Clock 設定</title>
 <style>
 body{margin:0;padding:1rem;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,Cantarell,'Open Sans','Helvetica Neue',sans-serif;background-color:#e0f7fa;color:#333;}
 .container{max-width:600px;margin:auto;background-color:#fff;padding:1.5rem;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);}
@@ -128,7 +129,7 @@ input[type='checkbox']{width:auto;margin-right:.5rem;}
 .hidden{display:none;}
 </style>
 </head><body><div class="container">
-<h1>Pico 時鐘設定</h1>
+<h1>Pico Clock 設定</h1>
 <form action="/" method="get">
 
 <fieldset><legend>Wi-Fi 連線</legend>
@@ -151,7 +152,7 @@ input[type='checkbox']{width:auto;margin-right:.5rem;}
 <div class="form-group" style="display:flex;align-items:center;"><input type="checkbox" id="chime_enabled" name="chime_enabled" value="true" """ + vals['chime_enabled'] + """><label for="chime_enabled" style="margin-bottom:0;">啟用定時響聲</label></div>
 <div class="form-group"><label for="chime_interval">響聲間隔:</label><select id="chime_interval" name="chime_interval"><option value="hourly" """ + vals['chime_interval_hourly'] + """>每小時</option><option value="half_hourly" """ + vals['chime_interval_half'] + """>每半小時</option></select></div>
 <div class="form-group"><label for="chime_pitch">音高 (Hz):</label><input type="number" id="chime_pitch" name="chime_pitch" value=\"""" + str(vals['chime_pitch']) + """\"></div>
-<div class="form-group"><label for="chime_volume">音量 (0-100):</label><input type="number" id="chime_volume" name="chime_volume" value=\"""" + str(vals['chime_volume']) + """\"></div>
+<div class="form-group"><label for="chime_volume">音量 (0-100):</label><input type="number" id="chime_volume" name="chime_volume" value=\"""" + str(vals['chime_volume']) + """\"><button type="button" onclick="testChime()" style="width:100%;padding:0.75rem;font-size:1rem;font-weight:bold;color:#fff;background-color:#00bcd4;border:none;border-radius:6px;cursor:pointer;transition:background-color .2s;margin-top:0.5rem;">測試響聲</button></div>
 </fieldset>
 
 <fieldset><legend>AP 模式設定</legend>
@@ -263,49 +264,30 @@ def run_web_server():
                 
                 # 處理測試響聲請求
                 if "GET /test_chime" in request:
-                    cl.send(b"HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n\r\nChime test")
+                    query_start = request.find("?") + 1
+                    query_end = request.find(" ", query_start)
+                    query_string = request[query_start:query_end]
+                    params = parse_query_string(query_string)
+                    
+                    pitch = int(params.get("pitch", "880"))
+                    volume = int(params.get("volume", "80"))
+                    
+                    try:
+                        chime_obj = Chime()
+                        chime_obj.do_chime(pitch=pitch, volume=volume)
+                        chime_obj.deinit()
+                        cl.send(b"HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n\r\nChime test successful")
+                    except Exception as e:
+                        print("Error playing chime:", e)
+                        cl.send(b"HTTP/1.0 500 Internal Server Error\r\nContent-Type: text/plain\r\n\r\nError playing chime")
                     cl.close()
                     continue
                 
                 # 處理配置表單提交
+                # 處理配置表單提交
                 if "GET /?" in request and "ssid=" in request:
                     print("Processing configuration form...")
-                    
-                    # 先發送成功頁面，避免連線中斷
-                    success_page = """HTTP/1.0 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>設定進行中</title>
-  <style>
-    body { font-family: Arial, sans-serif; padding: 20px; margin: 0; background-color: #f4f4f4; text-align: center; }
-    .container { background: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); display: inline-block; margin-top: 50px; max-width: 400px; }
-    h1 { color: #00796b; margin-bottom: 20px; }
-    p { color: #666; font-size: 16px; line-height: 1.5; }
-    .progress { width: 100%; height: 4px; background-color: #e0e0e0; border-radius: 2px; margin: 20px 0; overflow: hidden; }
-    .progress-bar { width: 0%; height: 100%; background-color: #00796b; border-radius: 2px; animation: progress 3s ease-in-out forwards; }
-    @keyframes progress { to { width: 100%; } }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h1>Pico 設定完成</h1>
-    <p>設定已成功儲存，系統將在 3 秒後重新啟動。</p>
-    <div class="progress"><div class="progress-bar"></div></div>
-    <p>請稍候...</p>
-  </div>
-</body>
-</html>
-"""
-                    
-                    try:
-                        cl.send(success_page.encode())
-                        cl.close()
-                    except Exception as e:
-                        print("Error sending response:", e)
-                    
-                    # 使用新的解析方法
+
                     try:
                         # 提取 query string
                         if "?" in request:
@@ -315,25 +297,25 @@ def run_web_server():
                                 query_end = request.find("\r", query_start)
                             if query_end == -1:
                                 query_end = len(request)
-                            
+
                             query_string = request[query_start:query_end]
                             print("Query string:", query_string[:100] + "..." if len(query_string) > 100 else query_string)
-                            
+
                             # 使用新的解析函數
                             params = parse_query_string(query_string)
                             print("Parsed parameters:", len(params), "items")
-                            
+
                             # 安全地取得參數值
                             new_ssid = params.get("ssid", "")
                             new_password = params.get("password", "")
                             new_location = params.get("location", "Taipei")
                             new_api_key = params.get("api_key", "")
                             new_birthday = params.get("birthday", "0101")
-                            
+
                             print("SSID:", new_ssid)
                             print("Password length:", len(new_password))
                             print("Location:", new_location)
-                            
+
                             # 構建配置
                             config_data = {
                                 "ap_mode": {
@@ -360,52 +342,111 @@ def run_web_server():
                                     "volume": 80
                                 }
                             }
-                            
+
                             # 處理數值參數，加入異常處理
                             try:
                                 config_data["user"]["light_threshold"] = int(params.get("light_threshold", "56000"))
                             except (ValueError, TypeError):
                                 config_data["user"]["light_threshold"] = 56000
-                            
+
                             try:
                                 config_data["user"]["image_interval_min"] = int(params.get("image_interval_min", "2"))
                             except (ValueError, TypeError):
                                 config_data["user"]["image_interval_min"] = 2
-                            
+
                             try:
                                 config_data["chime"]["pitch"] = int(params.get("chime_pitch", "880"))
                             except (ValueError, TypeError):
                                 config_data["chime"]["pitch"] = 880
-                            
+
                             try:
                                 config_data["chime"]["volume"] = int(params.get("chime_volume", "80"))
                             except (ValueError, TypeError):
                                 config_data["chime"]["volume"] = 80
-                            
+
                             # 保存配置
                             print("Saving configuration...")
                             with open("config.json", "w") as f:
                                 ujson.dump(config_data, f)
                             print("Configuration saved successfully!")
-                            
-                            # 驗證保存
-                            with open("config.json", "r") as f:
-                                saved_config = ujson.load(f)
-                                print("Verification - SSID:", saved_config.get("wifi", {}).get("ssid", "NOT FOUND"))
-                            
+
+                            # Prepare data for success page, masking sensitive info
+                            display_config = {
+                                "wifi_ssid": config_data["wifi"]["ssid"],
+                                "location": config_data["weather"]["location"],
+                                "birthday": config_data["user"]["birthday"],
+                                "light_threshold": config_data["user"]["light_threshold"],
+                                "image_interval_min": config_data["user"]["image_interval_min"],
+                                "chime_enabled": "是" if config_data["chime"]["enabled"] else "否",
+                                "chime_interval": "每小時" if config_data["chime"]["interval"] == "hourly" else "每半小時",
+                                "chime_pitch": config_data["chime"]["pitch"],
+                                "chime_volume": config_data["chime"]["volume"],
+                                "ap_mode_ssid": config_data["ap_mode"]["ssid"]
+                            }
+
+                            success_page_template = """HTTP/1.0 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n
+<html>
+<head>
+  <meta charset=\"utf-8\">
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
+  <title>設定進行中</title>
+  <style>
+    body {{ font-family: Arial, sans-serif; padding: 20px; margin: 0; background-color: #f4f4f4; text-align: center; }}
+    .container {{ background: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); display: inline-block; margin-top: 50px; max-width: 400px; }}
+    h1 {{ color: #00796b; margin-bottom: 20px; }}
+    p {{ color: #666; font-size: 16px; line-height: 1.5; }}
+    .progress {{ width: 100%; height: 4px; background-color: #e0e0e0; border-radius: 2px; margin: 20px 0; overflow: hidden; }}
+    .progress-bar {{ width: 100%; height: 100%; background-color: #00796b; border-radius: 2px; animation: progress 5s ease-in-out forwards; }}
+    @keyframes progress {{ to {{ width: 100%; }} }}
+    .config-details {{ text-align: left; margin-top: 20px; border-top: 1px solid #eee; padding-top: 15px; }}
+    .config-details p {{ margin: 5px 0; }}
+    .config-details strong {{ color: #004d40; }}
+  </style>
+</head>
+<body>
+  <div class=\"container\">
+    <h1>Pico Clock 設定完成</h1>
+    <p>設定已成功儲存，系統將在 5 秒後重新啟動。</p>
+    <div class=\"progress\"><div class=\"progress-bar\"></div></div>
+    <div class=\"config-details\">
+      <h2>已儲存的設定:</h2>
+      <p><strong>Wi-Fi SSID:</strong> {wifi_ssid}</p>
+      <p><strong>天氣地點:</strong> {location}</p>
+      <p><strong>生日:</strong> {birthday}</p>
+      <p><strong>光感臨界值:</strong> {light_threshold}</p>
+      <p><strong>圖片輪播間隔:</strong> {image_interval_min} 分鐘</p>
+      <p><strong>定時響聲啟用:</strong> {chime_enabled}</p>
+      <p><strong>響聲間隔:</strong> {chime_interval}</p>
+      <p><strong>音高:</strong> {chime_pitch} Hz</p>
+      <p><strong>音量:</strong> {chime_volume}</p>
+      <p><strong>AP 模式 SSID:</strong> {ap_mode_ssid}</p>
+    </div>
+    <p>請稍候...</p>
+  </div>
+</body>
+</html>
+"""
+                            success_page = success_page_template.format(**display_config)
+
+                            try:
+                                cl.send(success_page.encode())
+                                cl.close()
+                            except Exception as e:
+                                print("Error sending response:", e)
+
                         else:
                             print("No query string found in request")
-                            
+
                     except Exception as e:
                         print("Error in configuration processing:", str(e))
                         import sys
                         sys.print_exception(e)
-                    
+
                     # 顯示重啟訊息並重啟
                     try:
                         update_display_Restart()
-                        print("Restarting in 3 seconds...")
-                        time.sleep(3)
+                        print("Restarting in 5 seconds...")
+                        time.sleep(5)
                         s.close()
                         machine.reset()
                     except Exception as e:
