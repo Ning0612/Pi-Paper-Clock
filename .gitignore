@@ -1,5 +1,9 @@
 # Ignore all .bin files in src/image and its subdirectories
 src/image/**/*.bin
+src/image/**/*.jpg
+src/image/**/*.jpeg
+src/image/**/*.png
+src/image/**/*.svg
 
 # Ignore the old config.py
 src/config.py
@@ -8,4 +12,5 @@ src/config.py
 !.gitkeep
 
 GEMINI.md
+CLAUDE.md
 src/config.json

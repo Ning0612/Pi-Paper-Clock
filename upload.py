@@ -2,15 +2,16 @@ import subprocess
 import os
 import argparse
 import time 
-import sys # 引入 sys 模組用於標準輸入輸出
+import sys
 import threading
 
 # --- Configuration ---
 SOURCE_DIR = "src"
-INCLUDE_EXTENSIONS = [".py", ".json"]  # 檔案類型白名單
-UPLOAD_IMAGES = True # 是否上傳圖片檔案
-MPREMOTE_PORT = None  # 如需指定，如 "COM3" 或 "/dev/ttyACM0"
-ENABLE_CLEAN = True  # 是否在上傳前清除舊檔
+INCLUDE_EXTENSIONS = [".py", ".json"]
+UPLOAD_IMAGES = True
+MPREMOTE_PORT = None
+ENABLE_CLEAN = True
+ENABLE_RECURSIVE_CLEAN = False  # 新增：是否遞迴清除所有檔案
 
 # 用於停止讀取執行緒的事件
 stop_reader_event = threading.Event()
@@ -25,14 +26,13 @@ def _reader_thread(pipe, output_stream):
             if line:
                 output_stream.write(line)
                 output_stream.flush()
-            else: # 如果讀到空行，可能是管道關閉或沒有更多數據
-                if pipe.closed: # 檢查管道是否已關閉
+            else:
+                if pipe.closed:
                     break
-                time.sleep(0.01) # 短暫等待，避免忙碌循環
-        except ValueError: # 管道可能在讀取時被關閉 (例如，子進程關閉了寫入端)
+                time.sleep(0.01)
+        except ValueError:
             break
         except Exception as e:
-            # print(f"讀取執行緒發生錯誤: {e}", file=sys.stderr) # 診斷用，實際部署時可註解掉
             break
 
 def interactive_repl(base_cmd):
@@ -54,7 +54,6 @@ def interactive_repl(base_cmd):
         errors='ignore'
     )
 
-    # 啟動獨立執行緒來即時讀取 stdout 和 stderr
     stdout_thread = threading.Thread(target=_reader_thread, args=(process.stdout, sys.stdout))
     stderr_thread = threading.Thread(target=_reader_thread, args=(process.stderr, sys.stderr))
 
@@ -62,26 +61,21 @@ def interactive_repl(base_cmd):
     stderr_thread.start()
 
     try:
-        # 等待子進程結束 (使用者在 mpremote repl 中按下 Ctrl+X)
         process.wait()
     except KeyboardInterrupt:
         print("\n捕獲到 Ctrl+C，正在終止 REPL 進程...")
     finally:
-        # 設置事件以停止讀取執行緒
         stop_reader_event.set()
-        # 等待讀取執行緒完成
         stdout_thread.join(timeout=1)
         stderr_thread.join(timeout=1)
         
-        # 關閉管道
         if process.stdout:
             process.stdout.close()
         if process.stderr:
             process.stderr.close()
         if process.stdin:
-            process.stdin.close() # 雖然沒有寫入 stdin，但為完整性也關閉
+            process.stdin.close()
 
-        # 確保子進程已終止
         if process.poll() is None:
             process.terminate()
             process.wait(timeout=1)
@@ -89,18 +83,11 @@ def interactive_repl(base_cmd):
                 process.kill()
         
         print("REPL 連接已關閉。")
-        # 清除事件狀態，以便下次運行時重新開始
         stop_reader_event.clear()
-
 
 def run_command(command, ignore_exists_error=False, display_output=False, capture_output_only=False):
     """
     執行命令並捕獲輸出。
-    :param command: 要執行的命令列表。
-    :param ignore_exists_error: 是否忽略 "File exists" 錯誤。
-    :param display_output: 是否直接在控制台顯示標準輸出和錯誤輸出。
-                           如果為 False，輸出將被捕獲但不顯示，由調用者處理。
-    :param capture_output_only: 如果為 True，則只返回 stdout 內容，不列印也不檢查錯誤。
     """
     try:
         result = subprocess.run(command, check=not capture_output_only, capture_output=True, text=True, encoding='latin-1') 
@@ -133,11 +120,24 @@ def run_command(command, ignore_exists_error=False, display_output=False, captur
             print(f"❌ 執行命令時發生意外錯誤: {e}")
         return False
 
-
 def get_mpremote_base():
     return ["mpremote", "connect", MPREMOTE_PORT] if MPREMOTE_PORT else ["mpremote"]
 
+def format_bytes(size):
+    """
+    格式化檔案大小顯示
+    """
+    if size < 1024:
+        return f"{size} B"
+    elif size < 1024 * 1024:
+        return f"{size / 1024:.2f} KB"
+    else:
+        return f"{size / (1024 * 1024):.2f} MB"
+
 def collect_files():
+    """
+    收集要上傳的檔案，並統計檔案大小
+    """
     all_files = []
 
     for root, dirs, files in os.walk(SOURCE_DIR):
@@ -145,7 +145,8 @@ def collect_files():
             if any(file.endswith(ext) for ext in INCLUDE_EXTENSIONS):
                 full_path = os.path.join(root, file).replace("\\", "/")
                 rel_path = os.path.relpath(full_path, SOURCE_DIR).replace("\\", "/")
-                all_files.append((full_path, rel_path))
+                file_size = os.path.getsize(full_path)
+                all_files.append((full_path, rel_path, file_size))
 
     if UPLOAD_IMAGES:
         image_dir = os.path.join(SOURCE_DIR, "image")
@@ -155,56 +156,216 @@ def collect_files():
                     if file.endswith(".bin"):
                         full_path = os.path.join(root, file).replace("\\", "/")
                         rel_path = os.path.relpath(full_path, SOURCE_DIR).replace("\\", "/")
-                        all_files.append((full_path, rel_path))
+                        file_size = os.path.getsize(full_path)
+                        all_files.append((full_path, rel_path, file_size))
 
     return all_files
 
-def ensure_remote_dirs(path):
+def ensure_remote_dirs(path, created_dirs):
+    """
+    確保遠端目錄存在，使用字典記錄已建立的路徑
+    """
     base_cmd = get_mpremote_base()
     parts = path.split("/")
     current = ""
+    
     for part in parts:
         if not part:
             continue
         current = f"{current}/{part}" if current else part
-        subprocess.run(base_cmd + ["fs", "mkdir", f":{current}"], capture_output=True, text=True, encoding='latin-1')
-
+        
+        # 檢查是否已經建立過此路徑
+        if current not in created_dirs:
+            subprocess.run(base_cmd + ["fs", "mkdir", f":{current}"], capture_output=True, text=True, encoding='latin-1')
+            created_dirs[current] = True
 
 def _clear_current_line():
     print("\r" + " " * 150 + "\r", end="", flush=True)
 
-def _print_progress_line(current_command, progress, total_width=50):
+def _print_progress_line(current_command, progress, file_size=None, total_width=50):
+    """
+    顯示進度條，包含檔案大小資訊
+    """
     done_width = int(progress / 100 * total_width)
     bar = "█" * done_width + "-" * (total_width - done_width)
-    print(f"\r[{bar}] {progress:.1f}% | {current_command.ljust(80)}", end="", flush=True)
-
+    
+    size_info = f" ({format_bytes(file_size)})" if file_size else ""
+    command_text = f"{current_command}{size_info}"
+    
+    print(f"\r[{bar}] {progress:.1f}% | {command_text.ljust(80)}", end="", flush=True)
 
 def clean_device():
-    print("Cleaning device: Deleting files with extensions {}...".format(INCLUDE_EXTENSIONS))
+    """
+    清除裝置上的檔案
+    """
+    if ENABLE_RECURSIVE_CLEAN:
+        print("遞迴清除裝置上的所有檔案...")
+        clean_all_files()
+    else:
+        print("清除裝置上指定類型的檔案 {}...".format(INCLUDE_EXTENSIONS))
+        clean_specific_files()
+
+def clean_all_files():
+    """
+    遞迴清除裝置上的所有檔案和目錄
+    """
+    base_cmd = get_mpremote_base()
+    
+    def delete_directory_recursively(dir_path):
+        """遞迴刪除目錄及其內容，返回上層時才刪除目錄本身"""
+        # 列出目錄內容
+        proc = subprocess.run(base_cmd + ["fs", "ls", f":{dir_path}"], capture_output=True, text=True, encoding='latin-1')
+        if proc.returncode != 0:
+            # 目錄可能已經不存在，為空或無法存取
+            current_command_text = f"刪除目錄: {dir_path} (可能為空)"
+            print(f"\r{current_command_text.ljust(80)}", end="", flush=True)
+            return run_command(base_cmd + ["fs", "rmdir", f":{dir_path}"], display_output=False)
+        
+        # 遍歷目錄內容，立即處理每個項目
+        for line in proc.stdout.strip().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+                
+            item_name = parts[-1].rstrip('/')
+            if not item_name or item_name in ['', '.', '..']:
+                continue
+            
+            full_path = f"{dir_path}/{item_name}"
+            is_directory = parts[0].startswith('d') or line.endswith('/')
+            
+            if is_directory:
+                # 如果是目錄，遞迴進入處理
+                current_command_text = f"進入子目錄: {full_path}"
+                print(f"\r{current_command_text.ljust(80)}", end="", flush=True)
+                
+                # 遞迴呼叫，處理子目錄的所有內容
+                success = delete_directory_recursively(full_path)
+                if not success:
+                    print(f"\n❌ 處理子目錄失敗: {full_path}")
+                    
+                # 遞迴回到這裡時，子目錄已經被刪除了
+                
+            else:
+                # 如果是檔案，直接刪除
+                current_command_text = f"刪除檔案: {full_path}"
+                print(f"\r{current_command_text.ljust(80)}", end="", flush=True)
+                success = run_command(base_cmd + ["fs", "rm", f":{full_path}"], display_output=False)
+                
+        
+        # 當前目錄的所有內容都處理完了，現在刪除這個空目錄
+        current_command_text = f"刪除已清空的目錄: {dir_path}"
+        print(f"\r{current_command_text.ljust(80)}", end="", flush=True)
+        success = run_command(base_cmd + ["fs", "rmdir", f":{dir_path}"], display_output=False)
+        if not success:
+            print(f"\n❌ 刪除目錄失敗: {dir_path}")
+        
+        return success
+    
+    # 獲取根目錄的檔案和目錄列表
+    proc = subprocess.run(base_cmd + ["fs", "ls", ":"], capture_output=True, text=True, encoding='latin-1')
+    if proc.returncode != 0:
+        print("Warning: 無法列出根目錄檔案。裝置可能為空或未連接。")
+        return
+    
+    root_files = []
+    root_dirs = []
+    
+    for line in proc.stdout.strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+            
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        
+        item_name = parts[-1].rstrip('/')
+        if not item_name or item_name in ['', '.', '..', ':']:
+            continue
+        
+        if parts[0].startswith('d') or line.endswith('/'):
+            root_dirs.append(item_name)
+        else:
+            root_files.append(item_name)
+    
+    total_items = len(root_files) + len(root_dirs)
+    
+    if total_items == 0:
+        print("沒有找到要清除的檔案或目錄。")
+        return
+
+    print(f"找到 {len(root_files)} 個檔案和 {len(root_dirs)} 個目錄要刪除。")
+    
+    # 先刪除根目錄下的所有檔案
+    for f in root_files:
+        current_command_text = f"刪除根目錄檔案: {f}"
+        print(f"\r{current_command_text.ljust(80)}", end="", flush=True)
+        
+        success = run_command(base_cmd + ["fs", "rm", f":{f}"], display_output=False)
+        if not success:
+            print(f"\n❌ 刪除檔案失敗: {f}")
+    
+    # 遞迴處理所有根目錄
+    for d in root_dirs:
+        current_command_text = f"開始處理目錄樹: {d}"
+        print(f"\r{current_command_text.ljust(80)}", end="", flush=True)
+        
+        # 呼叫遞迴函數，會在處理完所有子內容後刪除目錄
+        success = delete_directory_recursively(d)
+        if not success:
+            print(f"\n❌ 處理目錄樹失敗: {d}")
+    
+    _clear_current_line()
+    print("✅ 檔案清除完成。\n")
+
+def clean_specific_files():
+    """
+    清除指定類型的檔案
+    """
     base_cmd = get_mpremote_base()
 
     proc = subprocess.run(base_cmd + ["fs", "ls", "-r", ":"], capture_output=True, text=True, encoding='latin-1')
     if proc.returncode != 0:
-        print("Warning: Could not list files. Maybe device is empty or not connected.")
+        print("Warning: 無法列出檔案。裝置可能為空或未連接。")
         return
 
     all_remote_files_raw = proc.stdout.strip().splitlines()
     
     files_to_delete = []
     for line in all_remote_files_raw:
-        parts = line.strip().split(maxsplit=1)
+        line = line.strip()
+        if not line:
+            continue
+            
+        parts = line.split()
         if len(parts) < 2:
             continue
-        file_name = parts[1]
+            
+        # 取最後一個部分作為檔案名
+        file_name = parts[-1]
+        
+        # 跳過目錄和無效檔案名
+        if (not file_name or 
+            file_name == ':' or 
+            file_name.endswith('/') or 
+            file_name in ['', '.', '..'] or
+            parts[0].startswith('d')):
+            continue
 
+        # 檢查檔案副檔名
         if any(file_name.endswith(ext) for ext in INCLUDE_EXTENSIONS):
             files_to_delete.append(file_name)
 
     if not files_to_delete:
-        print("No matching files found to clean.")
+        print("沒有找到符合條件的檔案要清除。")
         return
 
-    print(f"Found {len(files_to_delete)} files to delete.")
+    print(f"找到 {len(files_to_delete)} 個檔案要刪除。")
     for i, f in enumerate(files_to_delete):
         progress_percent = ((i + 1) / len(files_to_delete)) * 100
         current_command_text = f"刪除檔案: {f}"
@@ -214,6 +375,7 @@ def clean_device():
         if not success:
             _clear_current_line()
             print(f"❌ 刪除失敗: {f}")
+    
     _clear_current_line()
     print("✅ 檔案清除完成。\n")
 
@@ -223,92 +385,46 @@ def reset_device():
     base_cmd = get_mpremote_base()
     run_command(base_cmd + ["reset"], display_output=True)
 
-def get_device_space_info():
-    """
-    獲取裝置的總空間、使用空間和剩餘可用空間。
-    """
-    _clear_current_line()
-    print("\n📊 獲取裝置空間資訊...")
-    base_cmd = get_mpremote_base()
-    
-    df_output = run_command(base_cmd + ["fs", "df"], capture_output_only=True)
-
-    if not df_output:
-        print("❌ 無法獲取裝置空間資訊。")
-        print("請檢查裝置是否已連接並可被 mpremote 偵測到。")
-        return
-
-    print("\n--- mpremote fs df 原始輸出 ---")
-    print(df_output)
-    print("-------------------------------\n")
-
-    lines = df_output.splitlines()
-    if len(lines) < 2:
-        print("❌ 無法解析裝置空間資訊。輸出行數不足。")
-        return
-
-    data_line = lines[1].strip()
-    parts = data_line.split()
-
-    if len(parts) >= 5:
-        try:
-            total_blocks = int(parts[1]) * 1024
-            used_blocks = int(parts[2]) * 1024
-            available_blocks = int(parts[3]) * 1024
-
-            def format_bytes(size):
-                if size < 1024:
-                    return f"{size} B"
-                elif size < 1024 * 1024:
-                    return f"{size / 1024:.2f} KB"
-                else:
-                    return f"{size / (1024 * 1024):.2f} MB"
-
-            print(f"總空間: {format_bytes(total_blocks)}")
-            print(f"使用空間: {format_bytes(used_blocks)}")
-            print(f"剩餘可用空間: {format_bytes(available_blocks)}")
-        except ValueError:
-            print("❌ 解析裝置空間數值時發生錯誤。")
-            print(f"嘗試解析的行: '{data_line}'")
-    else:
-        print(f"❌ 無法解析裝置空間資訊的格式。預期的列數不足。實際列數: {len(parts)}")
-        print(f"嘗試解析的行: '{data_line}'")
-
-    print("")
-
 def upload_files():
     base_cmd = get_mpremote_base()
-    print("--- Pico W 自動部署開始 ---")
-
-    if ENABLE_CLEAN:
-        clean_device()
 
     file_list = collect_files()
     total_files = len(file_list)
-    print(f"📦 共 {total_files} 個檔案要上傳")
+    total_size = sum(file_size for _, _, file_size in file_list)
+    
+    print(f"📦 共 {total_files} 個檔案要上傳，總大小: {format_bytes(total_size)}")
 
-    for i, (local_path, remote_path) in enumerate(file_list):
+    # 建立目錄記錄字典
+    created_dirs = {}
+    uploaded_size = 0
+
+    for i, (local_path, remote_path, file_size) in enumerate(file_list):
         current_file_num = i + 1
-        progress_percent = (current_file_num / total_files) * 100
+        
+        # 根據檔案大小計算進度
+        progress_percent = (uploaded_size / total_size) * 100 if total_size > 0 else 0
 
+        # 建立目錄
         dirs = os.path.dirname(remote_path)
         if dirs:
             current_command_text = f"建立目錄: :{dirs}"
             _print_progress_line(current_command_text, progress_percent)
-            ensure_remote_dirs(dirs)
+            ensure_remote_dirs(dirs, created_dirs)
 
+        # 上傳檔案
         cmd = base_cmd + ["fs", "cp", local_path, f":{remote_path}"]
         current_command_text = f"上傳檔案: {remote_path}"
-        _print_progress_line(current_command_text, progress_percent)
+        _print_progress_line(current_command_text, progress_percent, file_size)
         
         if not run_command(cmd, display_output=False):
             _clear_current_line()
             print(f"❌ 上傳失敗: {remote_path}")
             return
         
+        uploaded_size += file_size
+        
     _clear_current_line()
-    print("\n✅ 上傳完成。") # 這裡只顯示上傳完成
-    
+    print(f"\n✅ 上傳完成。總共上傳 {format_bytes(total_size)}")
 
     # 重啟裝置
     reset_device()
@@ -320,11 +436,23 @@ def upload_files():
     print("\n現在您可以進入裝置 Terminal (REPL)... 按 Ctrl+X 退出。")
     interactive_repl(base_cmd)
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Upload files to Pico W.")
+    parser.add_argument("--no-images", action="store_false", dest="upload_images", default=True, help="Do not upload image files.")
+    parser.add_argument("--recursive-clean", action="store_true", dest="recursive_clean", default=False, help="遞迴清除裝置上的所有檔案 (包含目錄)")
+    parser.add_argument("--no-clean", action="store_false", dest="enable_clean", default=True, help="跳過清除檔案步驟")
+    return parser.parse_args()
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Upload files to Pico W.")
-    parser.add_argument("--no-images", action="store_false", dest="upload_images", default=True,
-                        help="Do not upload image files.")
-    args = parser.parse_args()
+    args = parse_args()
+    
     UPLOAD_IMAGES = args.upload_images
+    ENABLE_RECURSIVE_CLEAN = args.recursive_clean
+    ENABLE_CLEAN = args.enable_clean
+
+    print("--- Pico W 自動部署開始 ---")
+
+    if ENABLE_CLEAN:
+        clean_device()
+
     upload_files()

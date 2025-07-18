@@ -19,6 +19,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 from PIL import Image, ImageTk, ImageOps
 import numpy as np
+import os
 
 class DitheringConverterApp(tk.Tk):
     def __init__(self):
@@ -30,6 +31,7 @@ class DitheringConverterApp(tk.Tk):
         self.original_image = None   # 載入的原始 PIL Image (RGB)
         self.resized_image = None    # 根據設定尺寸縮放後的圖片
         self.converted_image = None  # 轉換後的 1-bit 圖片 (PIL, mode "1")
+        self.current_filename = None # 記錄當前載入的檔案名稱
         
         # 輸出尺寸設定 (單位：像素)
         self.out_width = tk.IntVar(value=128)
@@ -70,6 +72,8 @@ class DitheringConverterApp(tk.Tk):
             try:
                 # 載入圖片並轉換為 RGB
                 self.original_image = Image.open(path).convert("RGB")
+                # 記錄檔案名稱（不含副檔名）
+                self.current_filename = os.path.splitext(os.path.basename(path))[0]
                 self.update_preview()
             except Exception as e:
                 messagebox.showerror("錯誤", f"載入圖片失敗：{e}")
@@ -104,7 +108,12 @@ class DitheringConverterApp(tk.Tk):
         if self.converted_image is None:
             messagebox.showwarning("警告", "請先載入並預覽圖片轉換結果")
             return
+        
+        # 預設檔名：使用原始檔名加上 .bin 副檔名
+        default_filename = f"{self.current_filename}.bin" if self.current_filename else "output.bin"
+        
         path = filedialog.asksaveasfilename(title="儲存 .bin 檔案",
+                                            initialfile=default_filename,
                                             defaultextension=".bin",
                                             filetypes=[("Bin Files", "*.bin")])
         if path:

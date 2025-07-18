@@ -97,14 +97,14 @@ def draw_image(canvas, image_path, src_width, src_height, x, y):
             img_data = f.read()
         expected_length = (src_width * src_height) // 8
         if len(img_data) != expected_length:
-            print(f"圖片資料長度不符: {image_path}。預期長度: {expected_length}, 實際長度: {len(img_data)}")
+            print(f"Image data length mismatch: expected {expected_length}, got {len(img_data)}")
             return
         img_fb = framebuf.FrameBuffer(bytearray(img_data), src_width, src_height, framebuf.MONO_HLSB)
         canvas.blit(img_fb, x, y)
     except OSError as e:
-        print(f"讀取圖片檔案失敗: {image_path} - {e}")
+        print(f"Error reading image file: {image_path} - {e}")
     except Exception as e:
-        print(f"處理圖片時發生未知錯誤: {image_path} - {e}")
+        print(f"Error processing image file: {image_path} - {e}")
 
 def clear_region(canvas, x1, y1, x2, y2):
     width = x2 - x1
@@ -121,7 +121,7 @@ def display_rotated_screen(draw_callback, angle=90, partial_update=False):
         canvas_width = 128
         canvas_height = 296
     else:
-        raise ValueError("不支援此旋轉角度")
+        raise ValueError("Unsupported rotation angle: {}".format(angle))
     canvas_buf = bytearray(canvas_width * canvas_height // 8)
     canvas = framebuf.FrameBuffer(canvas_buf, canvas_width, canvas_height, framebuf.MONO_HLSB)
     for i in range(len(canvas_buf)):

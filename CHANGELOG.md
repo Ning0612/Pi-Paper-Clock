@@ -5,6 +5,27 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)，
 且本專案遵循 [Semantic Versioning](https://semver.org/spec/v2.0.0.html)。
 
+## [1.3.0] - 2025-07-18
+
+### 新增功能 (Added)
+- **圖片管理增強**：
+  - 新增日期特定事件圖片支援，可顯示與當前日期相關的圖片。
+  - 觸控螢幕可循環切換圖片。
+  - 載入頁面圖片現在會隨機顯示。
+
+### 變更與重構 (Changed)
+- **部署腳本優化 (`upload.py`)**：
+  - 腳本已大幅重構，支援設備遞歸清理。
+  - 上傳過程提供更詳細的進度報告（包含檔案大小）。
+  - 改進目錄創建邏輯，避免重複的 `mkdir` 調用。
+  - 移除 `get_device_space_info` 函數。
+- **本地化與訊息統一**：
+  - `src/app_controller.py` 和 `src/display_utils.py` 中的多處列印訊息和使用者介面字串已從中文改為英文。
+- **工具改進 (`tools/image_to_bin.py`)**：
+  - 轉換工具現在會保留原始檔案名稱作為預設儲存名稱。
+- **版本控制忽略設定**：
+  - `.gitignore` 已更新，忽略 `src/image` 目錄下的常見圖片格式 (`.jpg`, `.jpeg`, `.png`)。
+
 ## [1.2.0] - 2025-07-18
 
 ### 新增功能 (Added)

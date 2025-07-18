@@ -1,7 +1,9 @@
 # display_manager.py
 from display_utils import draw_scaled_text, draw_image, display_rotated_screen
 from netutils import get_local_time
-from file_manager import list_files, get_image_path
+from file_manager import list_files, get_image_path, shuffle_files
+import random
+import time
 
 def update_page_weather(current_weather, weather_forecast, display_image_path, partial_update, t):
     def draw(canvas):
@@ -71,7 +73,8 @@ def update_page_loading(partial_update):
     def draw(canvas):
         image_dir = "/image/login"
         file_list = list_files(image_dir)
-        image_path = get_image_path(image_dir, file_list, offset=0)
+        random.seed(time.time())
+        image_path = get_image_path(image_dir, file_list, offset=random.randint(0, len(file_list) - 1))
         if image_path:
             draw_image(canvas, image_path, 296, 128, 0, 0)
         else:

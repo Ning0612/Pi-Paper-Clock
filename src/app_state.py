@@ -12,3 +12,7 @@ class AppState:
         self.partial_update = False
         self.image_name_list = []
         self.display_image_path = ""
+        # 新增：日期特定事件圖片相關狀態
+        self.event_image_list = []
+        self.event_image_offset = 0
+        self.current_event_date = ""

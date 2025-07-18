@@ -5,7 +5,7 @@ from config_manager import config_manager
 from netutils import sync_time, get_local_time
 from weather import fetch_current_weather, fetch_weather_forecast
 from display_manager import update_page_weather, update_page_time_image, update_page_birthday, update_display_Restart
-from file_manager import get_image_path
+from file_manager import get_image_path, get_date_event_images, shuffle_files
 from chime import Chime
 
 class AppController:
@@ -21,14 +21,18 @@ class AppController:
         # 新增：用於按鈕長按判斷的屬性
         # 儲存每個按鈕的按下時間戳記
         self.button_press_timestamps = {}
-        # 長按閾值，單位毫秒 (3 秒)
+        # 長按閾值，單位毫秒 (5 秒)
         self.long_press_threshold_ms = 5000
 
     def handle_touch(self, touch_state):
         # 如果有觸控事件且觸控位置在特定區域
         if touch_state and touch_state[0] == "Touch" and touch_state[1][0] > 168:
-            # 如果圖片列表不為空
-            if self.state.image_name_list:
+            # 如果有日期特定事件圖片，優先切換事件圖片
+            if self.state.event_image_list:
+                self.state.event_image_offset = (self.state.event_image_offset + 1) % len(self.state.event_image_list)
+                print("Event image changed, offset:", self.state.event_image_offset)
+            # 否則切換常規圖片
+            elif self.state.image_name_list:
                 # 切換到下一張圖片
                 self.state.image_offset = (self.state.image_offset + 1) % len(self.state.image_name_list)
                 print("Image changed, offset:", self.state.image_offset)
@@ -56,7 +60,7 @@ class AppController:
                     press_duration = time.ticks_diff(current_time_ms, self.button_press_timestamps[i])
 
                     if press_duration >= self.long_press_threshold_ms:
-                        print(f"按鈕 {i+1} 已長按 {self.long_press_threshold_ms / 1000} 秒，觸發 Wi-Fi 重置！")
+                        print(f"Button {i+1} long pressed for {press_duration} ms, resetting Wi-Fi and rebooting...")
                         self._reset_wifi_and_reboot()
                         # 注意：一旦觸發重置並重啟，後面的程式碼就不會執行了
                         return # 提前返回，避免處理其他按鈕或重複觸發
@@ -107,6 +111,17 @@ class AppController:
         # 獲取要顯示的圖片路徑
         self.state.display_image_path = get_image_path(image_directory, self.state.image_name_list, self.state.image_offset)
 
+        # 檢查日期特定事件
+        current_date = f"{t[1]:02d}{t[2]:02d}"
+        if current_date != self.state.current_event_date:
+            # 日期發生變化，重新載入事件圖片
+            self.state.current_event_date = current_date
+            self.state.event_image_list = get_date_event_images(current_date)
+            if self.state.event_image_list:
+                self.state.event_image_list = shuffle_files(self.state.event_image_list)
+                self.state.event_image_offset = 0
+                print(f"Date event found for {current_date}, loaded {len(self.state.event_image_list)} images")
+
         # 定期獲取天氣資料
         if t[4] % 3 == 0 or self.state.is_first_run: # 每 3 分鐘或首次運行時獲取當前天氣
             self.state.current_weather = fetch_current_weather(self.api_key, self.location)
@@ -119,12 +134,15 @@ class AppController:
         if not self.state.weather_forecast:
             self.state.weather_forecast = fetch_weather_forecast(self.api_key, self.location)
 
+        if self.state.event_image_list:
+            self.state.display_image_path = get_image_path(f"/image/events/{current_date}", self.state.event_image_list, self.state.event_image_offset)
+
         # 頁面渲染邏輯
         # 如果是生日，顯示生日頁面
-        if config_manager.get("user.birthday") == f"{t[1]:02d}{t[2]:02d}":
+        if config_manager.get("user.birthday") == current_date:
             update_page_birthday(self.state.partial_update, t)
         # 如果有當前天氣資料，顯示天氣頁面
-        elif self.state.current_weather:
+        elif self.state.current_weather and self.state.weather_forecast:
             update_page_weather(self.state.current_weather, self.state.weather_forecast, self.state.display_image_path, self.state.partial_update, t)
         # 否則，顯示時間和圖片頁面
         else:
@@ -156,6 +174,6 @@ class AppController:
         config_manager.set("wifi.ssid", "") # 清空 Wi-Fi SSID 設定
         config_manager.set("wifi.password", "") # 清空 Wi-Fi 密碼設定
         update_display_Restart()
-        print("Wi-Fi 設定已重置。裝置正在重新啟動...")
+        print("Wi-Fi Configuration reset. Rebooting device...")
         time.sleep(3) # 給予足夠時間顯示訊息
         machine.reset() # 重啟裝置
