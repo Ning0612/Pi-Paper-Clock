@@ -73,9 +73,9 @@ def update_page_loading(partial_update):
     def draw(canvas):
         image_dir = "/image/login"
         file_list = list_files(image_dir)
-        random.seed(time.time())
-        image_path = get_image_path(image_dir, file_list, offset=random.randint(0, len(file_list) - 1))
-        if image_path:
+        if file_list:
+            image_name = random.choice(file_list)
+            image_path = f"{image_dir}/{image_name}.bin"
             draw_image(canvas, image_path, 296, 128, 0, 0)
         else:
             draw_scaled_text(canvas, "No image", 20, 20, 2, 0)
