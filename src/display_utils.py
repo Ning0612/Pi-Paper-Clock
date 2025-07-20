@@ -1,5 +1,6 @@
 # display_utils.py
 import framebuf
+import gc
 
 def get_pixel(buf, x, y, width):
     bytes_per_line = width // 8
@@ -91,7 +92,15 @@ def draw_scaled_text(canvas, text, x, y, scale, color=0):
     scaled_fb = framebuf.FrameBuffer(scaled_buf, scaled_width, scaled_height, framebuf.MONO_HLSB)
     canvas.blit(scaled_fb, x, y)
 
+    temp_fb = None
+    temp_buf = None
+    scaled_fb = None
+    scaled_buf = None
+    gc.collect()
+
 def draw_image(canvas, image_path, src_width, src_height, x, y):
+    img_data = None
+    img_fb = None
     try:
         with open(image_path, "rb") as f:
             img_data = f.read()
@@ -105,6 +114,11 @@ def draw_image(canvas, image_path, src_width, src_height, x, y):
         print(f"Error reading image file: {image_path} - {e}")
     except Exception as e:
         print(f"Error processing image file: {image_path} - {e}")
+    finally:
+        # 主動釋放大物件
+        img_data = None
+        img_fb = None
+        gc.collect()
 
 def clear_region(canvas, x1, y1, x2, y2):
     width = x2 - x1
@@ -112,7 +126,6 @@ def clear_region(canvas, x1, y1, x2, y2):
     canvas.fill_rect(x1, y1, width, height, 1)
 
 def display_rotated_screen(draw_callback, angle=90, partial_update=False):
-    import framebuf
     from epaper import EPD_2in9
     if angle in [90, 270]:
         canvas_width = 296
@@ -130,8 +143,13 @@ def display_rotated_screen(draw_callback, angle=90, partial_update=False):
     native_buf = rotate_buffer(canvas_buf, canvas_width, canvas_height, angle)
     epd = EPD_2in9()
     epd.init()
-    
     if partial_update:
         epd.display_Partial(native_buf)
     else:
         epd.display_Base(native_buf)
+    # 強制釋放 buffer
+    canvas_buf = None
+    native_buf = None
+    canvas = None
+    epd = None
+    gc.collect()

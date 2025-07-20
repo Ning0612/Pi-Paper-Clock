@@ -86,21 +86,24 @@ class AppController:
         time_since_touch = time.time() - self.state.last_touch_time if self.state.last_touch_time != -1 else 3601
 
         # 如果環境亮度低於閾值 (屏幕應關閉) 或距離上次觸控時間小於 3600 秒 (1 小時)
-        if adc_value <= light_threshold or time_since_touch < 3600:
+        if adc_value <= light_threshold or time_since_touch < 3600:         
+            # 如果日期發生變化
+            if t[2] != self.state.last_day:
+                self.state.last_day = t[2] # 更新上一次記錄的日期
+                self.state.weather_forecast = None # 清除天氣預報資料
+                self.state.current_weather = None # 清除當前天氣資料
+                sync_time() # 每天重新同步時間
+
             # 如果分鐘發生變化，或有觸控，或首次運行
             if t[4] != self.state.last_minute or touch_state is not None or self.state.is_first_run:
                 self.handle_touch(touch_state) # 處理觸控事件
                 self._perform_chime(t) # 執行定時響聲
+                self._update_weather() # 更新天氣資料
                 self._update_display(t) # 更新顯示內容
 
                 self.state.is_first_run = False # 標記為非首次運行
                 self.state.partial_update = not self.state.partial_update # 切換部分更新標誌
                 self.state.last_minute = t[4] # 更新上一次記錄的分鐘數
-
-            # 如果日期發生變化
-            if t[2] != self.state.last_day:
-                self.state.last_day = t[2] # 更新上一次記錄的日期
-                sync_time() # 每天重新同步時間
         else:
             # 螢幕關閉時，重置標誌以便喚醒時進行完整更新
             self.state.is_first_run = True
@@ -121,21 +124,6 @@ class AppController:
                 self.state.event_image_list = shuffle_files(self.state.event_image_list)
                 self.state.event_image_offset = 0
                 print(f"Date event found for {current_date}, loaded {len(self.state.event_image_list)} images")
-
-        # 定期獲取天氣資料
-        if t[4] % 3 == 0 or self.state.is_first_run: # 每 3 分鐘或首次運行時獲取當前天氣
-            self.state.current_weather = fetch_current_weather(self.api_key, self.location)
-        if t[4] % 30 == 0 or self.state.is_first_run: # 每 30 分鐘或首次運行時獲取天氣預報
-            self.state.weather_forecast = fetch_weather_forecast(self.api_key, self.location, days_limit=4, timezone_offset=self.time_zone_offset)
-
-        # 如果天氣資料獲取失敗，嘗試再次獲取 (fallback 機制)
-        if not self.state.current_weather:
-            self.state.current_weather = fetch_current_weather(self.api_key, self.location)
-        if not self.state.weather_forecast:
-            self.state.weather_forecast = fetch_weather_forecast(self.api_key, self.location)
-
-        if self.state.event_image_list:
-            self.state.display_image_path = get_image_path(f"/image/events/{current_date}", self.state.event_image_list, self.state.event_image_offset)
 
         # 頁面渲染邏輯
         # 如果是生日，顯示生日頁面
@@ -166,6 +154,27 @@ class AppController:
                     pitch=config_manager.get('chime.pitch', 880),
                     volume=config_manager.get('chime.volume', 80)
                 )
+
+    def _update_weather(self):
+        if time.ticks_diff(time.ticks_ms(), self.state.current_weather_last_updated) > 3 * 60 * 1000 or self.state.is_first_run or not self.state.current_weather:
+            current_weather = fetch_current_weather(self.api_key, self.location)
+            if current_weather:
+                self.state.current_weather = current_weather
+                self.state.current_weather_last_updated = time.ticks_ms()
+        
+        if time.ticks_diff(time.ticks_ms(), self.state.weather_forecast_last_updated) > 30 * 60 * 1000 or self.state.is_first_run or not self.state.weather_forecast:
+            weather_forecast = fetch_weather_forecast(self.api_key, self.location, days_limit=4, timezone_offset=self.time_zone_offset)
+            if weather_forecast:
+                self.state.weather_forecast = weather_forecast
+                self.state.weather_forecast_last_updated = time.ticks_ms()
+
+        # 如果當前天氣資料超過 30 分鐘未更新，則清除
+        if time.ticks_diff(time.ticks_ms(), self.state.current_weather_last_updated) > 30 * 60 * 1000:
+            self.state.current_weather = None
+
+        # 如果當前天氣資料超過 4 小時未更新，則清除
+        if time.ticks_diff(time.ticks_ms(), self.state.weather_forecast_last_updated) > 4 * 60 * 60 * 1000 :
+            self.state.weather_forecast = None
 
     def _reset_wifi_and_reboot(self):
         """

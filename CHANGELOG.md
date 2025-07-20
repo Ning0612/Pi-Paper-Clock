@@ -5,6 +5,14 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)，
 且本專案遵循 [Semantic Versioning](https://semver.org/spec/v2.0.0.html)。
 
+## [1.3.1] - 2025-07-21
+
+### 修正 (Fixed)
+- **記憶體穩定性與系統優化**：
+  - **天氣更新重構 (`weather.py`)**：徹底重構天氣預報 (`fetch_weather_forecast`) 的處理邏輯。改為分段讀取並逐塊解析 JSON 回應，僅提取必要欄位，避免一次性將大型資料載入記憶體，從根本上解決了 `MemoryError` 問題。
+  - **積極的記憶體回收**：在 `weather.py` 和 `display_utils.py` 中的記憶體密集型操作（如 JSON 解析、圖片繪製）後，強制執行垃圾回收 (`gc.collect()`) 並手動釋放大型物件 (`del obj`, `obj = None`)，有效緩解了記憶體碎片化。
+  - **優化更新調度 (`app_controller.py`)**：天氣更新由時間驅動，僅在固定間隔（當前天氣 3 分鐘，預報 30 分鐘）或資料不存在時觸發，避免了不必要的網路請求與計算，降低了系統負載。
+
 ## [1.3.0] - 2025-07-18
 
 ### 新增功能 (Added)
