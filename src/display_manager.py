@@ -6,6 +6,7 @@ import random
 import time
 
 def update_page_weather(current_weather, weather_forecast, display_image_path, partial_update, t):
+    """Updates the display to show weather and time information with a custom image."""
     def draw(canvas):
         date_str = "{:02d}/{:02d}".format(t[1], t[2])
         time_str = "{:02d}:{:02d}".format(t[3], t[4])
@@ -40,6 +41,7 @@ def update_page_weather(current_weather, weather_forecast, display_image_path, p
     display_rotated_screen(draw, angle=90, partial_update=partial_update)
 
 def update_page_time_image(display_image_path, partial_update, t):
+    """Updates the display to show time and a custom image."""
     def draw(canvas):
         date_str = "{:02d}/{:02d}".format(t[1], t[2])
         time_str = "{:02d}:{:02d}".format(t[3], t[4])
@@ -48,8 +50,8 @@ def update_page_time_image(display_image_path, partial_update, t):
         draw_image(canvas, display_image_path, 128, 128, 168, 0)
     display_rotated_screen(draw, angle=90, partial_update=partial_update)
 
-
 def update_page_birthday(partial_update, t):
+    """Updates the display to show a birthday message and image."""
     def draw(canvas):
         date_str = "{:02d}/{:02d}".format(t[1], t[2])
         time_str = "{:02d}:{:02d}".format(t[3], t[4])
@@ -68,8 +70,8 @@ def update_page_birthday(partial_update, t):
             
     display_rotated_screen(draw, angle=90, partial_update=partial_update)
 
-
 def update_page_loading(partial_update):
+    """Updates the display to show a loading screen with a random image."""
     def draw(canvas):
         image_dir = "/image/login"
         file_list = list_files(image_dir)
@@ -82,6 +84,15 @@ def update_page_loading(partial_update):
     display_rotated_screen(draw, angle=90, partial_update=partial_update)
 
 def update_display_Restart():
+    """Updates the display to show a reboot message."""
     def draw(canvas):
         draw_scaled_text(canvas, "Reboot...", 3, 50, 4, 0)
+    display_rotated_screen(draw, angle=90, partial_update=False)
+
+def update_display_AP(ap_ssid, ap_password, IP):
+    """Updates the e-Paper display to show AP mode details (SSID, Password, IP)."""
+    def draw(canvas):
+        draw_scaled_text(canvas, f"SSID: {ap_ssid}", 3, 20, 2, 0)
+        draw_scaled_text(canvas, f"Password: {ap_password}", 3, 50, 2, 0)
+        draw_scaled_text(canvas, f"IP: {IP}", 3, 80, 2, 0)
     display_rotated_screen(draw, angle=90, partial_update=False)

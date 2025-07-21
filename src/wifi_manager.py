@@ -1,30 +1,19 @@
 # wifi_manager.py
 import network
 import socket
-import ujson
 import time
 import machine
 import gc
-from display_utils import display_rotated_screen, draw_scaled_text
-from display_manager import update_display_Restart
+from display_manager import update_display_Restart, update_display_AP
 from config_manager import config_manager
 from chime import Chime
 
-def update_display_AP():
-    def draw(canvas):
-        ap_ssid = config_manager.get("ap_mode.ssid", "Pi_clock")
-        ap_password = config_manager.get("ap_mode.password", "123456")
-        draw_scaled_text(canvas, f"SSID: {ap_ssid}", 3, 20, 2, 0)
-        draw_scaled_text(canvas, f"Password: {ap_password}", 3, 50, 2, 0)
-        draw_scaled_text(canvas, "IP: 192.168.4.1", 3, 80, 2, 0)
-    display_rotated_screen(draw, angle=90, partial_update=False)
-
 def unquote(s):
-    """簡易的 URL decode 函式（MicroPython 用）"""
+    """Decodes URL-encoded strings (MicroPython compatible)."""
     if not s:
         return s
     
-    # 先處理 + 為空格
+    # Replace '+' with space
     s = s.replace('+', ' ')
     
     res = ""
@@ -35,10 +24,12 @@ def unquote(s):
                 hex_code = s[i+1:i+3]
                 if len(hex_code) == 2:
                     char_code = int(hex_code, 16)
-                    if 32 <= char_code <= 126:  # 只處理可顯示的 ASCII 字符
+                    # Only process displayable ASCII characters
+                    if 32 <= char_code <= 126:
                         res += chr(char_code)
                     else:
-                        res += s[i:i+3]  # 保留原始字符
+                        # Keep original characters if not displayable ASCII
+                        res += s[i:i+3]
                 else:
                     res += s[i]
                 i += 3
@@ -51,18 +42,18 @@ def unquote(s):
     return res
 
 def parse_query_string(query_string):
-    """解析 query string，避免使用正規表達式造成遞迴問題"""
+    """Parses a URL query string into a dictionary."""
     params = {}
     
     if not query_string:
         return params
     
-    # 使用字串分割方式代替正規表達式
+    # Split pairs by '&'
     pairs = query_string.split('&')
     
     for pair in pairs:
         if '=' in pair:
-            key, value = pair.split('=', 1)  # 只分割第一個 = 號
+            key, value = pair.split('=', 1)
             params[key] = unquote(value)
         else:
             params[pair] = ''
@@ -70,6 +61,7 @@ def parse_query_string(query_string):
     return params
 
 def scan_networks():
+    """Scans for available Wi-Fi networks."""
     sta = network.WLAN(network.STA_IF)
     sta.active(True)
     nets = sta.scan()
@@ -206,47 +198,44 @@ document.getElementById('chime_volume').addEventListener('change',testChime);
     return html
 
 def run_web_server():
-    """
-    運行 Web 服務器處理配置請求，包含 10 分鐘超時機制
-    """
+    """Runs a simple web server to handle configuration requests."""
     addr = socket.getaddrinfo("0.0.0.0", 80)[0][-1]
     s = socket.socket()
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind(addr)
     s.listen(1)
     
-    print("Web server listening on", addr)
+    print(f"Web server listening on {addr}")
     
     start_time = time.time()
     timeout_duration = 600  # 10 minutes
     
     while True:
         try:
-            # 檢查是否超過 10 分鐘
+            # check if the total timeout has been reached
             if time.time() - start_time > timeout_duration:
-                print("AP mode timeout (10 minutes), restarting...")
+                print("Info: AP mode timeout (10 minutes). Restarting system.")
                 s.close()
                 machine.reset()
             
-            # 設定 socket 接受連線的超時為 1 秒，避免無限期等待
+            # set a short timeout for accepting connections
             s.settimeout(1.0)
             
             try:
                 cl, addr = s.accept()
-                print("Client connected from", addr)
+                print(f"Info: Client connected from {addr}")
             except OSError:
-                # 超時，繼續迴圈檢查總體超時
                 continue
             
-            # 重設超時給客戶端連線處理
+            # set a longer timeout for the client socket
             cl.settimeout(10.0)
             
             try:
-                # 使用 makefile 穩定處理請求
+                
                 cl_file = cl.makefile("rwb", 0)
                 request = ""
                 
-                # 讀取完整的 HTTP 請求
+                # read the request line by line
                 while True:
                     try:
                         line = cl_file.readline()
@@ -256,15 +245,14 @@ def run_web_server():
                     except OSError:
                         break
                 
-                print("Request:", request[:100] + "..." if len(request) > 100 else request)
+                print(f"Request received: {request[:100] + '...' if len(request) > 100 else request}")
                 
-                # 忽略 favicon 請求
                 if "GET /favicon.ico" in request:
                     cl.send(b"HTTP/1.0 404 Not Found\r\n\r\n")
                     cl.close()
                     continue
                 
-                # 處理 ADC 請求
+                # handle ADC value request
                 if "GET /adc" in request:
                     adc_value = machine.ADC(machine.Pin(26)).read_u16()
                     response = "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n\r\n{\"adc\": " + str(adc_value) + "}"
@@ -272,7 +260,7 @@ def run_web_server():
                     cl.close()
                     continue
                 
-                # 處理測試響聲請求
+                # handle chime request
                 if "GET /test_chime" in request:
                     query_start = request.find("?") + 1
                     query_end = request.find(" ", query_start)
@@ -288,17 +276,17 @@ def run_web_server():
                         chime_obj.deinit()
                         cl.send(b"HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n\r\nChime test successful")
                     except Exception as e:
-                        print("Error playing chime:", e)
+                        print(f"Error: Failed to play chime. Details: {e}")
                         cl.send(b"HTTP/1.0 500 Internal Server Error\r\nContent-Type: text/plain\r\n\r\nError playing chime")
                     cl.close()
                     continue
                 
-                # 處理配置表單提交
+                # handle configuration form submission
                 if "GET /?" in request and "ssid=" in request:
-                    print("Processing configuration form...")
+                    print("Info: Processing configuration form...")
 
                     try:
-                        # 提取 query string
+                        # Parse the query string from the request
                         if "?" in request:
                             query_start = request.find("?") + 1
                             query_end = request.find(" ", query_start)
@@ -308,84 +296,47 @@ def run_web_server():
                                 query_end = len(request)
 
                             query_string = request[query_start:query_end]
-                            print("Query string:", query_string[:100] + "..." if len(query_string) > 100 else query_string)
+                            print(f"Query string found: {query_string[:100] + '...' if len(query_string) > 100 else query_string}")
 
-                            # 使用新的解析函數
+                            # parse query string into parameters
                             params = parse_query_string(query_string)
-                            print("Parsed parameters:", len(params), "items")
-
-                            # 安全地取得參數值
-                            new_ssid = params.get("ssid", "")
-                            new_password = params.get("password", "")
-                            new_location = params.get("location", "Taipei")
-                            new_api_key = params.get("api_key", "")
-                            new_birthday = params.get("birthday", "0101")
-
-                            print("SSID:", new_ssid)
-                            print("Password length:", len(new_password))
-                            print("Location:", new_location)
-
-                            # 構建配置
-                            config_data = {
-                                "ap_mode": {
-                                    "ssid": params.get("ap_mode_ssid", "Pi_clock"),
-                                    "password": params.get("ap_mode_password", "123456")
-                                },
-                                "wifi": {
-                                    "ssid": new_ssid,
-                                    "password": new_password
-                                },
-                                "weather": {
-                                    "api_key": new_api_key,
-                                    "location": new_location
-                                },
-                                "user": {
-                                    "birthday": new_birthday,
-                                    "light_threshold": 56000,
-                                    "image_interval_min": 2,
-                                    "timezone_offset": 8
-                                },
-                                "chime": {
-                                    "enabled": "chime_enabled" in params,
-                                    "interval": params.get("chime_interval", "hourly"),
-                                    "pitch": 880,
-                                    "volume": 80
-                                }
-                            }
-
-                            # 處理數值參數，加入異常處理
-                            try:
-                                config_data["user"]["light_threshold"] = int(params.get("light_threshold", "56000"))
-                            except (ValueError, TypeError):
-                                config_data["user"]["light_threshold"] = 56000
+                            
+                            config_manager.set("ap_mode.ssid", params.get("ap_mode_ssid", "Pi_clock"))
+                            config_manager.set("ap_mode.password", params.get("ap_mode_password", "123456"))
+                            config_manager.set("wifi.ssid", params.get("ssid", ""))
+                            config_manager.set("wifi.password", params.get("password", ""))
+                            config_manager.set("weather.api_key", params.get("api_key", ""))
+                            config_manager.set("weather.location", params.get("location", "Taipei"))
+                            config_manager.set("user.birthday", params.get("birthday", "0101"))
 
                             try:
-                                config_data["user"]["image_interval_min"] = int(params.get("image_interval_min", "2"))
+                                config_manager.set("user.light_threshold", int(params.get("light_threshold", "56000")))
                             except (ValueError, TypeError):
-                                config_data["user"]["image_interval_min"] = 2
+                                config_manager.set("user.light_threshold", 56000)
 
                             try:
-                                 config_data["user"]["timezone_offset"] = int(params.get("timezone_offset", "8"))
+                                config_manager.set("user.image_interval_min", int(params.get("image_interval_min", "2")))
                             except (ValueError, TypeError):
-                                config_data["user"]["timezone_offset"] = 8
+                                config_manager.set("user.image_interval_min", 2)
+
+                            try:
+                                config_manager.set("user.timezone_offset", int(params.get("timezone_offset", "8")))
+                            except (ValueError, TypeError):
+                                config_manager.set("user.timezone_offset", 8)
                             
                             try:
-                                config_data["chime"]["pitch"] = int(params.get("chime_pitch", "880"))
+                                config_manager.set("chime.pitch", int(params.get("chime_pitch", "880")))
                             except (ValueError, TypeError):
-                                config_data["chime"]["pitch"] = 880
+                                config_manager.set("chime.pitch", 880)
 
                             try:
-                                config_data["chime"]["volume"] = int(params.get("chime_volume", "80"))
+                                config_manager.set("chime.volume", int(params.get("chime_volume", "80")))
                             except (ValueError, TypeError):
-                                config_data["chime"]["volume"] = 80
+                                config_manager.set("chime.volume", 80)
 
-                            # 保存配置
-                            print("Saving configuration...")
-                            with open("config.json", "w") as f:
-                                ujson.dump(config_data, f)
-                            print("Configuration saved successfully!")
+                            print("Success: Configuration saved successfully!")
 
-                            # 使用和設定頁面相同樣式的成功頁面
+                            # Display success page with parameters
                             success_page = """HTTP/1.0 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n
 <html>
 <head>
@@ -418,71 +369,71 @@ legend{font-weight:600;padding:0 .5rem;color:#03d3fc}
 <fieldset><legend>Wi-Fi 連線設定</legend>
 <div class="config-item">
 <span class="config-label">網路名稱:</span>
-<span class="config-value">""" + config_data["wifi"]["ssid"] + """</span>
+<span class="config-value">""" + config_manager.get("wifi.ssid") + """</span>
 </div>
 <div class="config-item">
 <span class="config-label">密碼狀態:</span>
-<span class="config-value">""" + ("已設定" if config_data["wifi"]["password"] else "未設定") + """</span>
+<span class="config-value">""" + ("已設定" if config_manager.get("wifi.password") else "未設定") + """</span>
 </div>
 </fieldset>
 
 <fieldset><legend>天氣與個人化設定</legend>
 <div class="config-item">
 <span class="config-label">API Key:</span>
-<span class="config-value">""" + ("已設定" if config_data["weather"]["api_key"] else "未設定") + """</span>
+<span class="config-value">""" + ("已設定" if config_manager.get("weather.api_key") else "未設定") + """</span>
 </div>
 <div class="config-item">
 <span class="config-label">天氣地點:</span>
-<span class="config-value">""" + config_data["weather"]["location"] + """</span>
+<span class="config-value">""" + config_manager.get("weather.location") + """</span>
 </div>
 <div class="config-item">
 <span class="config-label">生日設定:</span>
-<span class="config-value">""" + config_data["user"]["birthday"] + """</span>
+<span class="config-value">""" + config_manager.get("user.birthday") + """</span>
 </div>
 </fieldset>
 
 <fieldset><legend>系統設定</legend>
 <div class="config-item">
 <span class="config-label">圖片輪播間隔:</span>
-<span class="config-value">""" + str(config_data["user"]["image_interval_min"]) + """ 分鐘</span>
+<span class="config-value">""" + str(config_manager.get("user.image_interval_min")) + """ 分鐘</span>
 </div>
 <div class="config-item">
 <span class="config-label">光感臨界值:</span>
-<span class="config-value">""" + str(config_data["user"]["light_threshold"]) + """</span>
+<span class="config-value">""" + str(config_manager.get("user.light_threshold")) + """</span>
 </div>
 <div class="config-item">
 <span class="config-label">時區偏移:</span>
-<span class="config-value">""" + str(config_data["user"]["timezone_offset"]) + """ 小時</span>
+<span class="config-value">""" + str(config_manager.get("user.timezone_offset")) + """ 小時</span>
 </div>
 </fieldset>
 
 <fieldset><legend>定時響聲設定</legend>
 <div class="config-item">
 <span class="config-label">響聲功能:</span>
-<span class="config-value">""" + ("啟用" if config_data["chime"]["enabled"] else "停用") + """</span>
+<span class="config-value">""" + ("啟用" if config_manager.get("chime.enabled") else "停用") + """</span>
 </div>
 <div class="config-item">
 <span class="config-label">響聲間隔:</span>
-<span class="config-value">""" + ("每小時" if config_data["chime"]["interval"] == "hourly" else "每半小時") + """</span>
+<span class="config-value">""" + ("每小時" if config_manager.get("chime.interval") == "hourly" else "每半小時") + """</span>
 </div>
 <div class="config-item">
 <span class="config-label">音調頻率:</span>
-<span class="config-value">""" + str(config_data["chime"]["pitch"]) + """ Hz</span>
+<span class="config-value">""" + str(config_manager.get("chime.pitch")) + """ Hz</span>
 </div>
 <div class="config-item">
 <span class="config-label">音量大小:</span>
-<span class="config-value">""" + str(config_data["chime"]["volume"]) + """</span>
+<span class="config-value">""" + str(config_manager.get("chime.volume")) + """</span>
 </div>
 </fieldset>
 
 <fieldset><legend>AP 模式設定</legend>
 <div class="config-item">
 <span class="config-label">AP 模式名稱:</span>
-<span class="config-value">""" + config_data["ap_mode"]["ssid"] + """</span>
+<span class="config-value">""" + config_manager.get("ap_mode.ssid") + """</span>
 </div>
 <div class="config-item">
 <span class="config-label">AP 密碼狀態:</span>
-<span class="config-value">""" + ("已設定" if config_data["ap_mode"]["password"] else "未設定") + """</span>
+<span class="config-value">""" + ("已設定" if config_manager.get("ap_mode.password") else "未設定") + """</span>
 </div>
 </fieldset>
 
@@ -508,28 +459,27 @@ countdownElement.textContent = '重新啟動中...';
                                 cl.send(success_page.encode())
                                 cl.close()
                             except Exception as e:
-                                print("Error sending response:", e)
+                                print(f"Error: Failed to send response. Details: {e}")
 
                         else:
-                            print("No query string found in request")
+                            print("Warning: No query string found in the request.")
 
                     except Exception as e:
-                        print("Error in configuration processing:", str(e))
+                        print(f"Error: An error occurred during configuration processing. Details: {str(e)}")
                         import sys
                         sys.print_exception(e)
 
-                    # 顯示重啟訊息並重啟
+                    # Restart the system after saving configuration and displaying restart message
                     try:
                         update_display_Restart()
-                        print("Restarting in 5 seconds...")
+                        print("Info: Restarting system in 5 seconds...")
                         time.sleep(5)
                         s.close()
                         machine.reset()
                     except Exception as e:
-                        print("Error during restart:", e)
+                        print(f"Error: An error occurred during system restart. Details: {e}")
                         machine.reset()
                 
-                # 顯示主配置頁面
                 else:
                     try:
                         networks = scan_networks()
@@ -537,14 +487,14 @@ countdownElement.textContent = '重新啟動中...';
                         cl.send(page.encode())
                         cl.close()
                     except Exception as e:
-                        print("Error generating page:", e)
+                        print(f"Error: Failed to generate or send HTML page. Details: {e}")
                         try:
                             cl.close()
                         except:
                             pass
                     
             except Exception as e:
-                print("Error handling client:", e)
+                print(f"Error: An error occurred while handling the client connection. Details: {e}")
                 import sys
                 sys.print_exception(e)
                 try:
@@ -554,7 +504,7 @@ countdownElement.textContent = '重新啟動中...';
                 continue
                 
         except Exception as e:
-            print("Server error:", e)
+            print(f"Error: A server-level error occurred. Details: {e}")
             import sys
             sys.print_exception(e)
             continue
@@ -562,11 +512,7 @@ countdownElement.textContent = '重新啟動中...';
             gc.collect()
 
 def wifi_manager():
-    """
-    Main WiFi manager function that handles connection and configuration
-    Returns WLAN object if successful, None otherwise
-    """
-    
+    """Main WiFi manager function that handles connection and configuration."""
     # Try to connect to saved WiFi
     sta = network.WLAN(network.STA_IF)
     sta.active(True)
@@ -575,22 +521,22 @@ def wifi_manager():
     saved_password = config_manager.get("wifi.password", "")
     
     if saved_ssid and saved_password:
-        print("Connecting to", saved_ssid, "...")
+        print(f"Info: Attempting to connect to saved Wi-Fi network: {saved_ssid}")
         sta.connect(saved_ssid, saved_password)
         
-        # Wait for connection (10 minutes timeout)
-        timeout = 600
+        # Wait for connection (1 minutes timeout)
+        timeout = 60
         while timeout > 0 and not sta.isconnected():
             time.sleep(1)
             timeout -= 1
             
         if sta.isconnected():
-            print("Connected to", saved_ssid)
-            print("IP:", sta.ifconfig()[0])
+            print(f"Success: Connected to {saved_ssid}.")
+            print(f"IP Address: {sta.ifconfig()[0]}")
             return sta
     
     # Connection failed, start AP mode for configuration
-    print("Starting AP mode for configuration...")
+    print("Info: Wi-Fi connection failed or no configuration found. Starting AP mode.")
     
     ap = network.WLAN(network.AP_IF)
     ap.active(True)
@@ -601,11 +547,11 @@ def wifi_manager():
     ap.config(ssid=ap_ssid, password=ap_password)
     ap.ifconfig(('192.168.4.1', '255.255.255.0', '192.168.4.1', '192.168.4.1'))
     
-    update_display_AP()
+    update_display_AP(ap_ssid, ap_password, '192.168.4.1')
     
-    print("AP Mode: SSID=" + ap_ssid + ", IP=192.168.4.1")
+    print(f"Info: AP Mode enabled. SSID: {ap_ssid}, IP: 192.168.4.1")
     
-    # 啟動 Web 服務器，包含 10 分鐘超時機制
+    # Start the web server to handle configuration requests
     run_web_server()
     
     return None

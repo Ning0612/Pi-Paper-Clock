@@ -5,42 +5,39 @@ import network
 import gc
 
 def _make_request_with_retry(url, max_retries=3, delay=5):
-    """發送 HTTP 請求，包含重試機制和錯誤處理"""
+    """Makes an HTTP request with retry mechanism and error handling."""
     for attempt in range(max_retries):
         try:
-            # 增加超時設定避免連線掛起
             response = urequests.get(url, timeout=10)
             if response.status_code == 200:
-                print(gc.mem_free(), "bytes free after request")
+                print(f"Memory available after request: {gc.mem_free()} bytes.")
                 return response
             else:
-                print(f"API request failed (attempt {attempt + 1}/{max_retries}), status code: {response.status_code}")
+                print(f"Error: API request failed on attempt {attempt + 1}/{max_retries}. Status code: {response.status_code}")
                 response.close()
         except OSError as e:
-            if e.errno == 103:  # ECONNABORTED
-                print(f"Connection aborted (attempt {attempt + 1}/{max_retries})")
+            if e.errno == 103:
+                print(f"Warning: Connection aborted on attempt {attempt + 1}/{max_retries}.")
             else:
-                print(f"Network error (attempt {attempt + 1}/{max_retries}): {e}")
+                print(f"Error: Network issue on attempt {attempt + 1}/{max_retries}. Details: {e}")
         except MemoryError:
-            print(f"Memory allocation failed (attempt {attempt + 1}/{max_retries})")
-            # 強制垃圾回收
+            print(f"Error: Memory allocation failed on attempt {attempt + 1}/{max_retries}. Forcing garbage collection.")
             gc.collect()
         except Exception as e:
-            print(f"API request exception (attempt {attempt + 1}/{max_retries}): {e}")
+            print(f"Error: API request exception on attempt {attempt + 1}/{max_retries}. Details: {e}")
         
-        # 等待後重試（除了最後一次嘗試）
         if attempt < max_retries - 1:
             time.sleep(delay)
     
-    print(f"API request failed after {max_retries} attempts: {url}")
+    print(f"Error: API request failed after {max_retries} attempts for URL: {url}")
     return None
 
 def fetch_current_weather(api_key, location):
-    """獲取當前天氣資訊"""
+    """Fetches current weather information."""
     if not network.WLAN(network.STA_IF).isconnected():
-        print("Not connected to the internet, skipping weather request.")
+        print("Info: No internet connection. Skipping current weather request.")
         return None
-    print(f"Fetching current weather for {location}...")
+    print(f"Info: Fetching current weather for {location}.")
     url = "https://api.openweathermap.org/data/2.5/weather?q={},TW&appid={}&units=metric".format(location, api_key)
     response = _make_request_with_retry(url)
     
@@ -49,34 +46,34 @@ def fetch_current_weather(api_key, location):
             data = response.json()
             temp = data["main"]["temp"]
             condition = data["weather"][0]["main"]
-            # 立即清理記憶體
             del data
             gc.collect()
 
             return temp, condition
         except (ValueError, AttributeError) as e:
-            print(f"Failed to parse current weather data (invalid JSON or attribute error): {e}")
+            print(f"Error: Failed to parse current weather data. Invalid JSON or attribute error. Details: {e}")
             return None
         except MemoryError:
-            print("Memory allocation failed during current weather processing")
+            print("Error: Memory allocation failed during current weather data processing.")
             return None
         except Exception as e:
-            print(f"An unexpected error occurred while fetching current weather: {e}")
+            print(f"Error: An unexpected error occurred while fetching current weather. Details: {e}")
             return None
         finally:
             try:
                 response.close()
             except Exception as e_close:
-                print(f"Error closing response for current weather: {e_close}")
+                print(f"Error: Failed to close response for current weather request. Details: {e_close}")
 
     return None
 
 def fetch_weather_forecast(api_key, location, days_limit=4, timezone_offset=8):
+    """Fetches weather forecast information. """
     if not network.WLAN(network.STA_IF).isconnected():
-        print("Not connected to the internet, skipping weather forecast request.")
+        print("Info: No internet connection. Skipping weather forecast request.")
         return []
 
-    print("Fetching weather forecast for {}...".format(location))
+    print(f"Info: Fetching weather forecast for {location}.")
     url = "https://api.openweathermap.org/data/2.5/forecast?q={0},TW&appid={1}&units=metric&cnt=40".format(location, api_key)
     response = _make_request_with_retry(url)
 
@@ -86,11 +83,11 @@ def fetch_weather_forecast(api_key, location, days_limit=4, timezone_offset=8):
     try:
         gc.collect()
         if response.status_code != 200:
-            print("Weather forecast query failed, status code:", response.status_code)
+            print(f"Error: Weather forecast query failed with status code: {response.status_code}")
             return []
         data = response.json()
         forecast_list = data.get("list", [])
-        del data  # 立刻釋放主資料結構
+        del data
         gc.collect()
 
         result = []
@@ -115,22 +112,21 @@ def fetch_weather_forecast(api_key, location, days_limit=4, timezone_offset=8):
                 current_date = month_day
 
             if month_day != current_date:
-                # 儲存前一天
+                # Store previous day's aggregated data
                 if temps_count > 0:
                     avg_temp = temps_sum / temps_count
-                    # 最常出現的天氣
                     most_common_weather = max(weather_counts, key=weather_counts.get)
                     avg_rain_prob = (rain_sum / rain_count) * 100 if rain_count > 0 else 0
                     result.append((current_date, avg_temp, most_common_weather, avg_rain_prob))
                     processed_days += 1
 
-                # 重設
+                # Reset for new day
                 current_date = month_day
                 temps_sum = temps_count = rain_sum = rain_count = 0
                 weather_counts = {}
-                gc.collect()  # 只在換天時釋放
+                gc.collect()
 
-            # 累積數據
+            # Accumulate data for the current day
             temp = entry["main"]["temp"]
             weather = entry["weather"][0]["main"]
             rain_prob = entry.get("pop", 0)
@@ -141,33 +137,33 @@ def fetch_weather_forecast(api_key, location, days_limit=4, timezone_offset=8):
             rain_sum += rain_prob
             rain_count += 1
 
-            # 完全釋放已處理 entry
+            # Explicitly release processed entry
             forecast_list[i] = None
 
-        # 最後一天
+        # Process data for the last day
         if temps_count > 0 and processed_days <= days_limit:
             avg_temp = temps_sum / temps_count
             most_common_weather = max(weather_counts, key=weather_counts.get)
             avg_rain_prob = (rain_sum / rain_count) * 100 if rain_count > 0 else 0
             result.append((current_date, avg_temp, most_common_weather, avg_rain_prob))
 
-        # 釋放主 list
+        # Release main list
         del forecast_list
         gc.collect()
         return result
 
     except (ValueError, AttributeError) as e:
-        print("Failed to parse weather forecast data (invalid JSON or attribute error):", e)
+        print(f"Error: Failed to parse weather forecast data. Invalid JSON or attribute error. Details: {e}")
         return []
     except MemoryError:
-        print("Memory allocation failed during ultra minimal weather forecast processing")
+        print("Error: Memory allocation failed during weather forecast processing.")
         gc.collect()
         return []
     except Exception as e:
-        print("An unexpected error occurred while fetching ultra minimal weather forecast:", e)
+        print(f"Error: An unexpected error occurred while fetching weather forecast. Details: {e}")
         return []
     finally:
         try:
             response.close()
         except Exception as e_close:
-            print("Error closing response for ultra minimal weather forecast:", e_close)
+            print(f"Error: Failed to close response for weather forecast request. Details: {e_close}")

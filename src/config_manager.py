@@ -1,18 +1,18 @@
 import ujson
-import os
 
 CONFIG_FILE = 'config.json'
 
 class ConfigManager:
+    """Manages application configuration, loading from and saving to a JSON file."""
     def __init__(self):
         self.config = self._load_config()
 
     def _load_config(self):
+        """Loads configuration from the CONFIG_FILE. Returns default config if file is not found or invalid."""
         try:
             with open(CONFIG_FILE, 'r') as f:
                 return ujson.load(f)
         except (OSError, ValueError):
-            # If config file doesn't exist or is invalid, return a default structure
             return {
                 "ap_mode": {
                     "ssid": "Pi_clock",
@@ -41,10 +41,12 @@ class ConfigManager:
             }
 
     def _save_config(self):
+        """Saves the current configuration to the CONFIG_FILE."""
         with open(CONFIG_FILE, 'w') as f:
             ujson.dump(self.config, f)
 
     def get(self, key, default=None):
+        """Retrieves a configuration value using a dot-separated key."""
         keys = key.split('.')
         val = self.config
         for k in keys:
@@ -55,6 +57,7 @@ class ConfigManager:
         return val
 
     def set(self, key, value):
+        """Sets a configuration value using a dot-separated key and saves the config."""
         keys = key.split('.')
         val = self.config
         for i, k in enumerate(keys):

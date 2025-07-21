@@ -3,12 +3,14 @@ import framebuf
 import gc
 
 def get_pixel(buf, x, y, width):
+    """Gets the pixel value from a framebuffer."""
     bytes_per_line = width // 8
     index = (x // 8) + y * bytes_per_line
     bit = 7 - (x % 8)
     return 0 if ((buf[index] >> bit) & 0x01) == 0 else 1
 
 def set_pixel(buf, x, y, width, color):
+    """Sets the pixel value in a framebuffer."""
     bytes_per_line = width // 8
     index = (x // 8) + y * bytes_per_line
     bit = 7 - (x % 8)
@@ -18,6 +20,7 @@ def set_pixel(buf, x, y, width, color):
         buf[index] |= (1 << bit)
 
 def rotate_buffer_270(src, src_width, src_height):
+    """Rotates a framebuffer 270 degrees clockwise."""
     dest_width = src_height
     dest = bytearray(len(src))
     for i in range(len(dest)):
@@ -31,6 +34,7 @@ def rotate_buffer_270(src, src_width, src_height):
     return dest
 
 def rotate_buffer_180(src, src_width, src_height):
+    """Rotates a framebuffer 180 degrees clockwise."""
     dest = bytearray(len(src))
     for i in range(len(dest)):
         dest[i] = 0xff
@@ -43,6 +47,7 @@ def rotate_buffer_180(src, src_width, src_height):
     return dest
 
 def rotate_buffer_90_clockwise(src, src_width, src_height):
+    """Rotates a framebuffer 90 degrees clockwise."""
     dest_width = src_height
     dest = bytearray(len(src))
     for i in range(len(dest)):
@@ -56,6 +61,7 @@ def rotate_buffer_90_clockwise(src, src_width, src_height):
     return dest
 
 def rotate_buffer(src, src_width, src_height, angle):
+    """Rotates a framebuffer by a specified angle."""
     if angle == 90:
         return rotate_buffer_90_clockwise(src, src_width, src_height)
     elif angle == 180:
@@ -66,6 +72,7 @@ def rotate_buffer(src, src_width, src_height, angle):
         raise ValueError("Unsupported rotation angle")
 
 def draw_scaled_text(canvas, text, x, y, scale, color=0):
+    """Draws scaled text on the canvas."""
     orig_char_width = 8
     orig_char_height = 8
     orig_width = len(text) * orig_char_width
@@ -99,6 +106,7 @@ def draw_scaled_text(canvas, text, x, y, scale, color=0):
     gc.collect()
 
 def draw_image(canvas, image_path, src_width, src_height, x, y):
+    """Draws an image from a binary file onto the canvas."""
     img_data = None
     img_fb = None
     try:
@@ -106,26 +114,27 @@ def draw_image(canvas, image_path, src_width, src_height, x, y):
             img_data = f.read()
         expected_length = (src_width * src_height) // 8
         if len(img_data) != expected_length:
-            print(f"Image data length mismatch: expected {expected_length}, got {len(img_data)}")
+            print(f"Error: Image data length mismatch for {image_path}. Expected {expected_length}, got {len(img_data)}.")
             return
         img_fb = framebuf.FrameBuffer(bytearray(img_data), src_width, src_height, framebuf.MONO_HLSB)
         canvas.blit(img_fb, x, y)
     except OSError as e:
-        print(f"Error reading image file: {image_path} - {e}")
+        print(f"Error: Could not read image file {image_path}. Details: {e}")
     except Exception as e:
-        print(f"Error processing image file: {image_path} - {e}")
+        print(f"Error: An unexpected error occurred while processing {image_path}. Details: {e}")
     finally:
-        # 主動釋放大物件
         img_data = None
         img_fb = None
         gc.collect()
 
 def clear_region(canvas, x1, y1, x2, y2):
+    """Clears a rectangular region on the canvas."""
     width = x2 - x1
     height = y2 - y1
     canvas.fill_rect(x1, y1, width, height, 1)
 
 def display_rotated_screen(draw_callback, angle=90, partial_update=False):
+    """Displays content on the e-paper screen with rotation."""
     from epaper import EPD_2in9
     if angle in [90, 270]:
         canvas_width = 296
@@ -147,7 +156,6 @@ def display_rotated_screen(draw_callback, angle=90, partial_update=False):
         epd.display_Partial(native_buf)
     else:
         epd.display_Base(native_buf)
-    # 強制釋放 buffer
     canvas_buf = None
     native_buf = None
     canvas = None

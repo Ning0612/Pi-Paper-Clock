@@ -1,6 +1,7 @@
 # app_state.py
 
 class AppState:
+    """Manages the application's current state, including display, weather, and touch information."""
     def __init__(self):
         self.last_minute = -1
         self.last_day = -1

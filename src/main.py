@@ -9,27 +9,28 @@ from hardware_manager import HardwareManager
 from app_controller import AppController
 
 def main():
-    # 1. Initial Setup
+    """Main function to initialize and run the Pico Clock Weather Display application."""
+    # 1. Initial Setup: Display loading screen
     update_page_loading(False)
     
-    # Initialize application state and hardware
+    # Initialize application state and hardware components
     app_state = AppState()
     hardware = HardwareManager()
 
-    # 2. Wi-Fi Connection
-    wlan = wifi_manager() # This blocks until connected or configured
+    # 2. Wi-Fi Connection: Attempt to connect to Wi-Fi
+    wlan = wifi_manager()
     if wlan and wlan.isconnected():
         sync_time()
 
-    # 3. Prepare Image List
+    # 3. Prepare Image List: Load and shuffle custom images
     image_directory = "/image/custom"
     app_state.image_name_list = list_files(image_directory)
     app_state.image_name_list = shuffle_files(app_state.image_name_list)
 
-    # 4. Initialize Controller
+    # 4. Initialize Controller: Set up the main application controller
     controller = AppController(app_state, hardware)
 
-    # 5. Main Loop
+    # 5. Main Loop: Continuously run the application logic
     while True:
         controller.run_main_loop()
         time.sleep(1)

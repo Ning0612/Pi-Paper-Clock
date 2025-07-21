@@ -14,3 +14,4 @@ src/config.py
 GEMINI.md
 CLAUDE.md
 src/config.json
+src/image/weather_icons/convert.bat

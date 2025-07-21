@@ -5,6 +5,22 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)，
 且本專案遵循 [Semantic Versioning](https://semver.org/spec/v2.0.0.html)。
 
+## [1.4.0] - 2025-07-21
+
+### 變更與重構 (Changed & Refactored)
+- **程式碼品質提升**:
+  - **全面英文化**：統一將所有模組 (`.py`) 中的註解與 `print()` 輸出訊息從中文改為英文，提升可讀性。
+  - **新增 Docstrings**：為專案中所有主要類別與函式補上標準的 Docstrings，詳細說明其功能、參數與用途，大幅改善程式碼的可維護性。
+- **Wi-Fi 與設定流程優化 (`wifi_manager.py`)**:
+  - **重構設定儲存邏輯**：簡化 AP 模式下儲存設定的流程，改為直接呼叫 `config_manager.set()`，使程式碼更直觀且易於管理。
+  - **縮短連線超時**：將 Wi-Fi 連線等待時間從 10 分鐘縮短至 1 分鐘，讓裝置在無法連線時能更快進入 AP 設定模式。
+- **顯示邏輯整理 (`display_manager.py`)**:
+  - 將 AP 模式的顯示邏輯從 `wifi_manager.py` 移至 `display_manager.py` 中，並建立 `update_display_AP` 函式，提高顯示相關程式碼的集中度。
+
+### 清理 (Removed)
+- **移除無用函式**：刪除了 `netutils.py` 中不再使用的 `load_wifi_config`, `save_wifi_config` 等輔助函式。
+- **清理驅動程式碼**：移除了 `epaper.py` 中原廠提供但已註解的範例程式碼，保持檔案整潔。
+
 ## [1.3.1] - 2025-07-21
 
 ### 修正 (Fixed)
