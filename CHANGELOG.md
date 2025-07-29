@@ -5,6 +5,15 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)，
 且本專案遵循 [Semantic Versioning](https://semver.org/spec/v2.0.0.html)。
 
+## [1.5.0] - 2025-07-29
+
+### 新增功能 (Added)
+- **AP 模式安全性強化**：
+  - AP 模式的預設密碼長度提升至 8 個字元 (`12345678`)，並在 `config.json.example` 與 `config_manager.py` 中同步更新，增強初次設定的安全性。
+- **AP 模式穩定性提升**：
+  - **重構設定儲存邏輯**：在 `wifi_manager.py` 中，將原本分散的參數解析與設定儲存流程，重構為先將所有設定存入 `dict`，再統一寫入，提升程式碼可讀性與可維護性。
+  - **新增錯誤處理頁面**：若使用者在 AP 設定頁面提交的表單資料不完整或格式錯誤，系統將顯示一個獨立的錯誤頁面，引導使用者返回修正，而不是直接崩潰或忽略錯誤。
+
 ## [1.4.0] - 2025-07-21
 
 ### 變更與重構 (Changed & Refactored)

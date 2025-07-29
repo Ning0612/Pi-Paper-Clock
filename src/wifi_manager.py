@@ -90,7 +90,7 @@ def generate_html_page(networks):
         "chime_pitch": config_manager.get("chime.pitch", 880),
         "chime_volume": config_manager.get("chime.volume", 80),
         "ap_ssid": config_manager.get("ap_mode.ssid", "Pi_clock"),
-        "ap_password": config_manager.get("ap_mode.password", "123456"),
+        "ap_password": config_manager.get("ap_mode.password", "12345678"),
         "adc_value": machine.ADC(machine.Pin(26)).read_u16()
     }
 
@@ -285,59 +285,47 @@ def run_web_server():
                 if "GET /?" in request and "ssid=" in request:
                     print("Info: Processing configuration form...")
 
+                    query_string = ""
+                    if "?" in request:
+                        query_start = request.find("?") + 1
+                        query_end = request.find(" ", query_start)
+                        query_string = request[query_start:query_end]
+                    
+                    params = parse_query_string(query_string)
+
                     try:
-                        # Parse the query string from the request
-                        if "?" in request:
-                            query_start = request.find("?") + 1
-                            query_end = request.find(" ", query_start)
-                            if query_end == -1:
-                                query_end = request.find("\r", query_start)
-                            if query_end == -1:
-                                query_end = len(request)
+                        config_to_save = {}
 
-                            query_string = request[query_start:query_end]
-                            print(f"Query string found: {query_string[:100] + '...' if len(query_string) > 100 else query_string}")
-
-                            # parse query string into parameters
-                            params = parse_query_string(query_string)
+                        # Parsing and validating parameters
+                        all_params_items = ["ap_mode_ssid", "ap_mode_password", "ssid", "password", "api_key", "location", "birthday",
+                                            "light_threshold", "image_interval_min", "timezone_offset", "chime_enabled",
+                                            "chime_interval", "chime_pitch", "chime_volume"]
+                        
+                        for item in all_params_items:
+                            if item not in params:
+                                raise ValueError(f"Missing required parameter: {item}")
                             
-                            config_manager.set("ap_mode.ssid", params.get("ap_mode_ssid", "Pi_clock"))
-                            config_manager.set("ap_mode.password", params.get("ap_mode_password", "123456"))
-                            config_manager.set("wifi.ssid", params.get("ssid", ""))
-                            config_manager.set("wifi.password", params.get("password", ""))
-                            config_manager.set("weather.api_key", params.get("api_key", ""))
-                            config_manager.set("weather.location", params.get("location", "Taipei"))
-                            config_manager.set("user.birthday", params.get("birthday", "0101"))
+                        config_to_save["ap_mode.ssid"] = params.get("ap_mode_ssid", "Pi_clock")
+                        config_to_save["ap_mode.password"] = params.get("ap_mode_password", "12345678")
+                        config_to_save["wifi.ssid"] = params.get("ssid", "")
+                        config_to_save["wifi.password"] = params.get("password", "")
+                        config_to_save["weather.api_key"] = params.get("api_key", "")
+                        config_to_save["weather.location"] = params.get("location", "Taipei")
+                        config_to_save["user.birthday"] = params.get("birthday", "0101")
+                        config_to_save["user.light_threshold"] = int(params.get("light_threshold", "56000"))
+                        config_to_save["user.image_interval_min"] = int(params.get("image_interval_min", "2"))
+                        config_to_save["user.timezone_offset"] = int(params.get("timezone_offset", "8"))
+                        config_to_save["chime.enabled"] = params.get("chime_enabled") == "true"
+                        config_to_save["chime.interval"] = params.get("chime_interval", "hourly")
+                        config_to_save["chime.pitch"] = int(params.get("chime_pitch", "880"))
+                        config_to_save["chime.volume"] = int(params.get("chime_volume", "80"))
 
-                            try:
-                                config_manager.set("user.light_threshold", int(params.get("light_threshold", "56000")))
-                            except (ValueError, TypeError):
-                                config_manager.set("user.light_threshold", 56000)
+                        for key, value in config_to_save.items():
+                            config_manager.set(key, value)
+                        
+                        print("Success: Configuration parsed and saved successfully!")
 
-                            try:
-                                config_manager.set("user.image_interval_min", int(params.get("image_interval_min", "2")))
-                            except (ValueError, TypeError):
-                                config_manager.set("user.image_interval_min", 2)
-
-                            try:
-                                config_manager.set("user.timezone_offset", int(params.get("timezone_offset", "8")))
-                            except (ValueError, TypeError):
-                                config_manager.set("user.timezone_offset", 8)
-                            
-                            try:
-                                config_manager.set("chime.pitch", int(params.get("chime_pitch", "880")))
-                            except (ValueError, TypeError):
-                                config_manager.set("chime.pitch", 880)
-
-                            try:
-                                config_manager.set("chime.volume", int(params.get("chime_volume", "80")))
-                            except (ValueError, TypeError):
-                                config_manager.set("chime.volume", 80)
-
-                            print("Success: Configuration saved successfully!")
-
-                            # Display success page with parameters
-                            success_page = """HTTP/1.0 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n
+                        success_page = """HTTP/1.0 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n
 <html>
 <head>
 <meta charset="utf-8">
@@ -365,120 +353,79 @@ legend{font-weight:600;padding:0 .5rem;color:#03d3fc}
 <h1>設定完成</h1>
 <p class="success-msg">您的 Pico Clock 設定已成功儲存！系統將在 <span id="countdown">5</span> 秒後重新啟動。</p>
 <div class="progress"><div class="progress-bar"></div></div>
-
 <fieldset><legend>Wi-Fi 連線設定</legend>
-<div class="config-item">
-<span class="config-label">網路名稱:</span>
-<span class="config-value">""" + config_manager.get("wifi.ssid") + """</span>
-</div>
-<div class="config-item">
-<span class="config-label">密碼狀態:</span>
-<span class="config-value">""" + ("已設定" if config_manager.get("wifi.password") else "未設定") + """</span>
-</div>
+<div class="config-item"><span class="config-label">網路名稱:</span><span class="config-value">""" + str(config_to_save["wifi.ssid"]) + """</span></div>
+<div class="config-item"><span class="config-label">密碼狀態:</span><span class="config-value">""" + ("已設定" if config_to_save["wifi.password"] else "未設定") + """</span></div>
 </fieldset>
-
 <fieldset><legend>天氣與個人化設定</legend>
-<div class="config-item">
-<span class="config-label">API Key:</span>
-<span class="config-value">""" + ("已設定" if config_manager.get("weather.api_key") else "未設定") + """</span>
-</div>
-<div class="config-item">
-<span class="config-label">天氣地點:</span>
-<span class="config-value">""" + config_manager.get("weather.location") + """</span>
-</div>
-<div class="config-item">
-<span class="config-label">生日設定:</span>
-<span class="config-value">""" + config_manager.get("user.birthday") + """</span>
-</div>
+<div class="config-item"><span class="config-label">API Key:</span><span class="config-value">""" + ("已設定" if config_to_save["weather.api_key"] else "未設定") + """</span></div>
+<div class="config-item"><span class="config-label">天氣地點:</span><span class="config-value">""" + str(config_to_save["weather.location"]) + """</span></div>
+<div class="config-item"><span class="config-label">生日設定:</span><span class="config-value">""" + str(config_to_save["user.birthday"]) + """</span></div>
 </fieldset>
-
 <fieldset><legend>系統設定</legend>
-<div class="config-item">
-<span class="config-label">圖片輪播間隔:</span>
-<span class="config-value">""" + str(config_manager.get("user.image_interval_min")) + """ 分鐘</span>
-</div>
-<div class="config-item">
-<span class="config-label">光感臨界值:</span>
-<span class="config-value">""" + str(config_manager.get("user.light_threshold")) + """</span>
-</div>
-<div class="config-item">
-<span class="config-label">時區偏移:</span>
-<span class="config-value">""" + str(config_manager.get("user.timezone_offset")) + """ 小時</span>
-</div>
+<div class="config-item"><span class="config-label">圖片輪播間隔:</span><span class="config-value">""" + str(config_to_save["user.image_interval_min"]) + """ 分鐘</span></div>
+<div class="config-item"><span class="config-label">光感臨界值:</span><span class="config-value">""" + str(config_to_save["user.light_threshold"]) + """</span></div>
+<div class="config-item"><span class="config-label">時區偏移:</span><span class="config-value">""" + str(config_to_save["user.timezone_offset"]) + """ 小時</span></div>
 </fieldset>
-
 <fieldset><legend>定時響聲設定</legend>
-<div class="config-item">
-<span class="config-label">響聲功能:</span>
-<span class="config-value">""" + ("啟用" if config_manager.get("chime.enabled") else "停用") + """</span>
-</div>
-<div class="config-item">
-<span class="config-label">響聲間隔:</span>
-<span class="config-value">""" + ("每小時" if config_manager.get("chime.interval") == "hourly" else "每半小時") + """</span>
-</div>
-<div class="config-item">
-<span class="config-label">音調頻率:</span>
-<span class="config-value">""" + str(config_manager.get("chime.pitch")) + """ Hz</span>
-</div>
-<div class="config-item">
-<span class="config-label">音量大小:</span>
-<span class="config-value">""" + str(config_manager.get("chime.volume")) + """</span>
-</div>
+<div class="config-item"><span class="config-label">響聲功能:</span><span class="config-value">""" + ("啟用" if config_to_save["chime.enabled"] else "停用") + """</span></div>
+<div class="config-item"><span class="config-label">響聲間隔:</span><span class="config-value">""" + ("每小時" if config_to_save["chime.interval"] == "hourly" else "每半小時") + """</span></div>
+<div class="config-item"><span class="config-label">音調頻率:</span><span class="config-value">""" + str(config_to_save["chime.pitch"]) + """ Hz</span></div>
+<div class="config-item"><span class="config-label">音量大小:</span><span class="config-value">""" + str(config_to_save["chime.volume"]) + """</span></div>
 </fieldset>
-
 <fieldset><legend>AP 模式設定</legend>
-<div class="config-item">
-<span class="config-label">AP 模式名稱:</span>
-<span class="config-value">""" + config_manager.get("ap_mode.ssid") + """</span>
-</div>
-<div class="config-item">
-<span class="config-label">AP 密碼狀態:</span>
-<span class="config-value">""" + ("已設定" if config_manager.get("ap_mode.password") else "未設定") + """</span>
-</div>
+<div class="config-item"><span class="config-label">AP 模式名稱:</span><span class="config-value">""" + str(config_to_save["ap_mode.ssid"]) + """</span></div>
+<div class="config-item"><span class="config-label">AP 密碼狀態:</span><span class="config-value">""" + ("已設定" if config_to_save["ap_mode.password"] else "未設定") + """</span></div>
 </fieldset>
-
 <div class="countdown">系統正在重新啟動中...</div>
 </div>
-
 <script>
-let timeLeft = 5;
-const countdownElement = document.getElementById('countdown');
-const timer = setInterval(() => {
-timeLeft--;
-countdownElement.textContent = timeLeft;
-if (timeLeft <= 0) {
-clearInterval(timer);
-countdownElement.textContent = '重新啟動中...';
-}
-}, 1000);
+let timeLeft=5;const c=document.getElementById('countdown');const t=setInterval(()=>{timeLeft--;c.textContent=timeLeft;if(timeLeft<=0){clearInterval(t);c.textContent='重新啟動中...'}},1000);
 </script>
-</body>
-</html>"""
+</body></html>"""
+                        cl.send(success_page.encode())
+                        cl.close()
 
-                            try:
-                                cl.send(success_page.encode())
-                                cl.close()
-                            except Exception as e:
-                                print(f"Error: Failed to send response. Details: {e}")
-
-                        else:
-                            print("Warning: No query string found in the request.")
-
-                    except Exception as e:
-                        print(f"Error: An error occurred during configuration processing. Details: {str(e)}")
-                        import sys
-                        sys.print_exception(e)
-
-                    # Restart the system after saving configuration and displaying restart message
-                    try:
+                        # Setting successful, update display and restart
                         update_display_Restart()
                         print("Info: Restarting system in 5 seconds...")
                         time.sleep(5)
                         s.close()
                         machine.reset()
-                    except Exception as e:
-                        print(f"Error: An error occurred during system restart. Details: {e}")
-                        machine.reset()
+
+                    except (ValueError, TypeError) as e:
+                        # Handle parsing errors
+                        print(f"Error: Failed to parse configuration parameters. Details: {e}")
+                        
+                        error_page = """HTTP/1.0 400 Bad Request\r\nContent-Type: text/html; charset=utf-8\r\n\r\n
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>設定錯誤</title>
+<style>
+body{margin:0;padding:1rem;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#fff0f0;color:#333}
+.container{max-width:600px;margin:auto;background:#fff;padding:1.5rem;border-radius:12px;box-shadow:0 4px 20px rgba(252,3,3,0.15)}
+h1{text-align:center;color:#fc0303;margin-bottom:1.5rem;font-size:2rem}
+.error-msg{text-align:center;margin-bottom:1.5rem;color:#666;font-size:1.1rem}
+.retry-btn{display:block;width:50%;margin:1.5rem auto 0;padding:1rem;font-size:1.1rem;font-weight:bold;color:#fff;background:#ff9800;border:none;border-radius:6px;cursor:pointer;transition:all .2s;text-align:center;text-decoration:none}
+.retry-btn:hover{background:#e68900;transform:translateY(-1px)}
+</style>
+</head>
+<body>
+<div class="container">
+<h1>設定失敗</h1>
+<p class="error-msg">提交的表單資料解析失敗或格式不正確。<br>請返回並檢查您的輸入。</p>
+<a href="/" class="retry-btn">返回重新設定</a>
+</div>
+</body>
+</html>"""
+                        
+                        # Parse error, send error page
+                        cl.send(error_page.encode())
+                        cl.close()
+                        continue 
                 
                 else:
                     try:
@@ -542,7 +489,7 @@ def wifi_manager():
     ap.active(True)
     
     ap_ssid = config_manager.get("ap_mode.ssid", "Pi_clock")
-    ap_password = config_manager.get("ap_mode.password", "123456")
+    ap_password = config_manager.get("ap_mode.password", "12345678")
     
     ap.config(ssid=ap_ssid, password=ap_password)
     ap.ifconfig(('192.168.4.1', '255.255.255.0', '192.168.4.1', '192.168.4.1'))

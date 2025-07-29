@@ -1,7 +1,7 @@
 {
   "ap_mode": {
     "ssid": "Pico_Clock_AP",
-    "password": "123456"
+    "password": "12345678"
   },
   "wifi": {
     "ssid": "your_wifi_ssid",

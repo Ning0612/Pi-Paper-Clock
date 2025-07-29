@@ -16,7 +16,7 @@ class ConfigManager:
             return {
                 "ap_mode": {
                     "ssid": "Pi_clock",
-                    "password": "123456"
+                    "password": "12345678"
                 },
                 "wifi": {
                     "ssid": "",
