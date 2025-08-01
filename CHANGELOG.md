@@ -5,6 +5,11 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)，
 且本專案遵循 [Semantic Versioning](https://semver.org/spec/v2.0.0.html)。
 
+## [1.5.1] - 2025-08-01
+
+### 修正 (Fixed)
+- **天氣預報日期格式修正**：在 `display_manager.py` 中，修正了日期格式化問題。確保在與天氣預報資料比對時，單位數的日期會補零（例如 `7` -> `07`），避免在每月的前九天可能發生的當日天氣無法正確顯示在預報列表中的錯誤。
+
 ## [1.5.0] - 2025-07-29
 
 ### 新增功能 (Added)

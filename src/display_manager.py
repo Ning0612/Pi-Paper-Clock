@@ -11,7 +11,7 @@ def update_page_weather(current_weather, weather_forecast, display_image_path, p
         date_str = "{:02d}/{:02d}".format(t[1], t[2])
         time_str = "{:02d}:{:02d}".format(t[3], t[4])
         
-        if weather_forecast[0][0][-2:] != str(t[2]):
+        if weather_forecast[0][0][-2:] != "{:02d}".format(t[2]):
             weather_forecast.insert(0, ("{:02d}-{:02d}".format(t[1], t[2]), current_weather[0], current_weather[1], -1))
             
         draw_scaled_text(canvas, date_str, 3, 10, 3, 0)
