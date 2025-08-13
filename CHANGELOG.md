@@ -5,6 +5,20 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)，
 且本專案遵循 [Semantic Versioning](https://semver.org/spec/v2.0.0.html)。
 
+## [1.6.0] - 2025-08-14
+
+### 變更與重構 (Changed & Refactored)
+- **統一按鈕長按與重置邏輯**：
+  - 將按鈕長按偵測邏輯集中到 `hardware_manager.py`，移除了 `app_controller.py` 中的重複實作。
+  - 新增 `wifi_manager.py:reset_wifi_and_reboot()` 函式，統一處理 Wi-Fi 和 AP 模式的設定重置與裝置重啟流程。
+  - 現在，無論在正常模式或 AP 模式下，長按任一按鈕 3 秒都會觸發一致的重置行為。
+- **AP 模式穩定性與體驗優化**：
+  - **動態超時機制**：AP 模式的閒置超時會因使用者活動（如客戶端連線、提交表單）而自動延長，防止在設定過程中意外重啟。
+  - **支援在 AP 模式下按鈕重置**：即使在 AP 模式的網頁設定介面下，使用者依然可以透過長按按鈕來重置裝置。
+
+### 修正 (Fixed)
+- **設定一致性**：修正了 AP 模式預設 SSID 在不同檔案中不一致的問題，統一為 `Pi_Clock_AP`。
+
 ## [1.5.1] - 2025-08-01
 
 ### 修正 (Fixed)

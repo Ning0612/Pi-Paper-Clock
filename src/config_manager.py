@@ -15,7 +15,7 @@ class ConfigManager:
         except (OSError, ValueError):
             return {
                 "ap_mode": {
-                    "ssid": "Pi_clock",
+                    "ssid": "Pi_Clock_AP",
                     "password": "12345678"
                 },
                 "wifi": {

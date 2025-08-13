@@ -7,6 +7,25 @@ import gc
 from display_manager import update_display_Restart, update_display_AP
 from config_manager import config_manager
 from chime import Chime
+from hardware_manager import HardwareManager
+
+def reset_wifi_and_reboot():
+    """Resets both Wi-Fi and AP configuration to defaults."""
+    print("Resetting WiFi and AP configuration to defaults...")
+    
+    # Reset WiFi settings
+    config_manager.set("wifi.ssid", "")
+    config_manager.set("wifi.password", "")
+    
+    # Reset AP settings to defaults
+    config_manager.set("ap_mode.ssid", "Pi_Clock_AP")
+    config_manager.set("ap_mode.password", "12345678")
+    
+    # Display restart message
+    update_display_Restart()
+    print("WiFi and AP configuration reset complete.")
+    machine.reset()
+
 
 def unquote(s):
     """Decodes URL-encoded strings (MicroPython compatible)."""
@@ -89,7 +108,7 @@ def generate_html_page(networks):
         "chime_interval_half": "selected" if config_manager.get("chime.interval") == "half_hourly" else "",
         "chime_pitch": config_manager.get("chime.pitch", 880),
         "chime_volume": config_manager.get("chime.volume", 80),
-        "ap_ssid": config_manager.get("ap_mode.ssid", "Pi_clock"),
+        "ap_ssid": config_manager.get("ap_mode.ssid", "Pi_Clock_AP"),
         "ap_password": config_manager.get("ap_mode.password", "12345678"),
         "adc_value": machine.ADC(machine.Pin(26)).read_u16()
     }
@@ -105,7 +124,7 @@ def generate_html_page(networks):
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Pico Clock 設定</title>
+<title>Pi Clock 設定</title>
 <style>
 body{margin:0;padding:1rem;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f0f8ff;color:#333}
 .container{max-width:600px;margin:auto;background:#fff;padding:1.5rem;border-radius:12px;box-shadow:0 4px 20px rgba(3,211,252,0.15)}
@@ -127,7 +146,7 @@ input[type='checkbox']{width:auto;margin-right:.5rem;transform:scale(1.2);accent
 </head>
 <body>
 <div class="container">
-<h1>Pico Clock 設定</h1>
+<h1>Pi Clock 設定</h1>
 <form action="/" method="get">
 
 <fieldset><legend>Wi-Fi 連線</legend>
@@ -198,7 +217,7 @@ document.getElementById('chime_volume').addEventListener('change',testChime);
     return html
 
 def run_web_server():
-    """Runs a simple web server to handle configuration requests."""
+    """Runs a simple web server to handle configuration requests with user activity detection and button reset support."""
     addr = socket.getaddrinfo("0.0.0.0", 80)[0][-1]
     s = socket.socket()
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -207,14 +226,39 @@ def run_web_server():
     
     print(f"Web server listening on {addr}")
     
+    # Initialize hardware manager for unified button handling
+    hardware = HardwareManager()
+    
+    def reset_callback(button_index):
+        """Callback function for button long press reset."""
+        print(f"Button {button_index+1} long pressed in AP mode. Resetting WiFi and AP settings...")
+        s.close()
+        reset_wifi_and_reboot()
+    
     start_time = time.time()
-    timeout_duration = 600  # 10 minutes
+    last_activity_time = time.time()  # Track user activity
+    timeout_duration = 600  # 10 minutes base timeout
+    activity_extension = 300  # 5 minutes extension per activity
     
     while True:
         try:
-            # check if the total timeout has been reached
-            if time.time() - start_time > timeout_duration:
-                print("Info: AP mode timeout (10 minutes). Restarting system.")
+            # Check for button long press using unified hardware manager
+            if hardware.handle_button_long_press(reset_callback):
+                # Reset was triggered, exit function
+                return
+            
+            # check if the total timeout has been reached, considering user activity
+            current_time = time.time()
+            time_since_start = current_time - start_time
+            time_since_activity = current_time - last_activity_time
+            
+            # Calculate dynamic timeout based on activity
+            effective_timeout = timeout_duration
+            if time_since_activity < activity_extension:
+                effective_timeout = timeout_duration + activity_extension
+                
+            if time_since_start > effective_timeout:
+                print(f"Info: AP mode timeout ({effective_timeout/60:.1f} minutes). Restarting system.")
                 s.close()
                 machine.reset()
             
@@ -223,7 +267,8 @@ def run_web_server():
             
             try:
                 cl, addr = s.accept()
-                print(f"Info: Client connected from {addr}")
+                last_activity_time = time.time()  # Update activity timestamp
+                print(f"Info: Client connected from {addr}. Activity detected, extending timeout.")
             except OSError:
                 continue
             
@@ -262,6 +307,7 @@ def run_web_server():
                 
                 # handle chime request
                 if "GET /test_chime" in request:
+                    last_activity_time = time.time()  # Update activity on chime test
                     query_start = request.find("?") + 1
                     query_end = request.find(" ", query_start)
                     query_string = request[query_start:query_end]
@@ -283,6 +329,7 @@ def run_web_server():
                 
                 # handle configuration form submission
                 if "GET /?" in request and "ssid=" in request:
+                    last_activity_time = time.time()  # Update activity on form submission
                     print("Info: Processing configuration form...")
 
                     query_string = ""
@@ -305,7 +352,7 @@ def run_web_server():
                             if item not in params:
                                 raise ValueError(f"Missing required parameter: {item}")
                             
-                        config_to_save["ap_mode.ssid"] = params.get("ap_mode_ssid", "Pi_clock")
+                        config_to_save["ap_mode.ssid"] = params.get("ap_mode_ssid", "Pi_Clock_AP")
                         config_to_save["ap_mode.password"] = params.get("ap_mode_password", "12345678")
                         config_to_save["wifi.ssid"] = params.get("ssid", "")
                         config_to_save["wifi.password"] = params.get("password", "")
@@ -351,7 +398,7 @@ legend{font-weight:600;padding:0 .5rem;color:#03d3fc}
 <body>
 <div class="container">
 <h1>設定完成</h1>
-<p class="success-msg">您的 Pico Clock 設定已成功儲存！系統將在 <span id="countdown">5</span> 秒後重新啟動。</p>
+<p class="success-msg">您的 Pi Clock 設定已成功儲存！系統將在 <span id="countdown">5</span> 秒後重新啟動。</p>
 <div class="progress"><div class="progress-bar"></div></div>
 <fieldset><legend>Wi-Fi 連線設定</legend>
 <div class="config-item"><span class="config-label">網路名稱:</span><span class="config-value">""" + str(config_to_save["wifi.ssid"]) + """</span></div>
@@ -488,7 +535,7 @@ def wifi_manager():
     ap = network.WLAN(network.AP_IF)
     ap.active(True)
     
-    ap_ssid = config_manager.get("ap_mode.ssid", "Pi_clock")
+    ap_ssid = config_manager.get("ap_mode.ssid", "Pi_Clock_AP")
     ap_password = config_manager.get("ap_mode.password", "12345678")
     
     ap.config(ssid=ap_ssid, password=ap_password)

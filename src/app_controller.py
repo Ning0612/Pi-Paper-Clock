@@ -1,11 +1,11 @@
 # app_controller.py
 import time
-import machine
 from config_manager import config_manager
 from netutils import sync_time, get_local_time
 from weather import fetch_current_weather, fetch_weather_forecast
-from display_manager import update_page_weather, update_page_time_image, update_page_birthday, update_display_Restart
+from display_manager import update_page_weather, update_page_time_image, update_page_birthday
 from file_manager import get_image_path, get_date_event_images, shuffle_files
+from wifi_manager import reset_wifi_and_reboot
 from chime import Chime
 
 class AppController:
@@ -24,8 +24,6 @@ class AppController:
         self.api_key = config_manager.get("weather.api_key")
         self.time_zone_offset = config_manager.get("user.timezone_offset", 8)
 
-        self.button_press_timestamps = {}
-        self.long_press_threshold_ms = 5000
 
     def handle_touch(self, touch_state):
         # Handle touch events and switch images
@@ -37,24 +35,15 @@ class AppController:
                 self.state.image_offset = (self.state.image_offset + 1) % len(self.state.image_name_list)
                 print(f"Image changed, offset: {self.state.image_offset}")
 
-    def handle_buttons(self, button_states):
-        """Handles button states, checking for long presses to reset Wi-Fi and reboot."""
-        current_time_ms = time.ticks_ms()
-
-        for i, state in enumerate(button_states):
-            if state == 1:
-                if i not in self.button_press_timestamps:
-                    self.button_press_timestamps[i] = current_time_ms
-                else:
-                    press_duration = time.ticks_diff(current_time_ms, self.button_press_timestamps[i])
-
-                    if press_duration >= self.long_press_threshold_ms:
-                        print(f"Button {i+1} long pressed for {press_duration} ms, resetting Wi-Fi and rebooting...")
-                        self._reset_wifi_and_reboot()
-                        return
-            else:
-                if i in self.button_press_timestamps:
-                    del self.button_press_timestamps[i]
+    def handle_buttons(self):
+        """Handles button long press detection using unified hardware manager approach."""
+        def reset_callback(button_index):
+            """Callback function for button long press reset."""
+            print(f"Button {button_index+1} long pressed in normal mode. Resetting WiFi and AP settings...")
+            reset_wifi_and_reboot()
+        
+        # Use hardware manager's unified button handling
+        self.hw.handle_button_long_press(reset_callback)
 
     def run_main_loop(self):
         """Executes the main application loop, handling sensor readings, time updates, and display logic."""
@@ -65,7 +54,7 @@ class AppController:
         if touch_state:
             self.state.last_touch_time = time.time()
 
-        self.handle_buttons(self.hw.get_button_states())
+        self.handle_buttons()
 
         light_threshold = config_manager.get("user.light_threshold", 55000)
         time_since_touch = time.time() - self.state.last_touch_time if self.state.last_touch_time != -1 else 3601
@@ -159,12 +148,3 @@ class AppController:
         # Clear weather forecast data if older than 4 hours
         if time.ticks_diff(time.ticks_ms(), self.state.weather_forecast_last_updated) > 4 * 60 * 60 * 1000 :
             self.state.weather_forecast = None
-
-    def _reset_wifi_and_reboot(self):
-        """Resets Wi-Fi configuration and reboots the device."""
-        config_manager.set("wifi.ssid", "")
-        config_manager.set("wifi.password", "")
-        update_display_Restart()
-        print("Wi-Fi Configuration reset. Rebooting device...")
-        time.sleep(3)
-        machine.reset()
