@@ -1,26 +1,73 @@
 {
-  "ap_mode": {
-    "ssid": "Pi_Clock_AP",
-    "password": "12345678"
+  "global": {
+    "ap_mode": {
+      "ssid": "Pi_Clock_AP",
+      "password": "12345678"
+    },
+    "weather_api_key": "your_openweathermap_api_key_here"
   },
-  "wifi": {
-    "ssid": "your_wifi_ssid",
-    "password": "your_wifi_password"
-  },
-  "weather": {
-    "api_key": "your_api_key_here",
-    "location": "Taipei"
-  },
-  "user": {
-    "birthday": "0101",
-    "light_threshold": 40000,
-    "image_interval_min": 2,
-    "timezone_offset": 8
-  },
-  "chime": {
-    "enabled": true,
-    "interval": "hourly",
-    "pitch": 2400,
-    "volume": 80
-  }
+  "profiles": [
+    {
+      "name": "家裡",
+      "wifi": {
+        "ssid": "your_home_wifi_ssid",
+        "password": "your_home_wifi_password"
+      },
+      "weather_location": "Taipei",
+      "user": {
+        "birthday": "0101",
+        "light_threshold": 40000,
+        "image_interval_min": 2,
+        "timezone_offset": 8
+      },
+      "chime": {
+        "enabled": true,
+        "interval": "hourly",
+        "pitch": 2400,
+        "volume": 80
+      }
+    },
+    {
+      "name": "公司",
+      "wifi": {
+        "ssid": "your_office_wifi_ssid",
+        "password": "your_office_wifi_password"
+      },
+      "weather_location": "Taipei",
+      "user": {
+        "birthday": "0101",
+        "light_threshold": 50000,
+        "image_interval_min": 5,
+        "timezone_offset": 8
+      },
+      "chime": {
+        "enabled": false,
+        "interval": "half_hourly",
+        "pitch": 1760,
+        "volume": 50
+      }
+    },
+    {
+      "name": "咖啡廳",
+      "wifi": {
+        "ssid": "your_cafe_wifi_ssid",
+        "password": "your_cafe_wifi_password"
+      },
+      "weather_location": "Zhonghe",
+      "user": {
+        "birthday": "0101",
+        "light_threshold": 30000,
+        "image_interval_min": 3,
+        "timezone_offset": 8
+      },
+      "chime": {
+        "enabled": true,
+        "interval": "half_hourly",
+        "pitch": 2080,
+        "volume": 60
+      }
+    }
+  ],
+  "active_profile": "家裡",
+  "last_connected_profile": null
 }
