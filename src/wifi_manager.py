@@ -43,38 +43,36 @@ def factory_reset():
     return True
 
 
-def unquote(s):
-    """Decodes URL-encoded strings (MicroPython compatible)."""
-    if not s:
-        return s
+def unquote(string):
+    """Decodes URL-encoded strings (MicroPython compatible) with UTF-8 support."""
+    if not string:
+        return ""
 
-    # Replace '+' with space
-    s = s.replace('+', ' ')
-
-    res = ""
+    res = []
     i = 0
-    while i < len(s):
-        if s[i] == "%" and i + 2 < len(s):
+    n = len(string)
+
+    while i < n:
+        char = string[i]
+        if char == '%' and i + 2 < n:
             try:
-                hex_code = s[i+1:i+3]
-                if len(hex_code) == 2:
-                    char_code = int(hex_code, 16)
-                    # Only process displayable ASCII characters
-                    if 32 <= char_code <= 126:
-                        res += chr(char_code)
-                    else:
-                        # Keep original characters if not displayable ASCII
-                        res += s[i:i+3]
-                else:
-                    res += s[i]
+                hex_value = int(string[i+1:i+3], 16)
+                res.append(hex_value)
                 i += 3
-            except (ValueError, TypeError):
-                res += s[i]
+            except ValueError:
+                res.append(ord('%'))
                 i += 1
-        else:
-            res += s[i]
+        elif char == '+':
+            res.append(ord(' '))
             i += 1
-    return res
+        else:
+            res.append(ord(char))
+            i += 1
+
+    try:
+        return bytes(res).decode('utf-8')
+    except:
+        return string
 
 def parse_query_string(query_string):
     """Parses a URL query string into a dictionary."""
@@ -121,8 +119,67 @@ def scan_networks():
 
     return list(unique_networks.values())
 
-def generate_html_page(networks, current_profile=None):
-    """Generates the configuration HTML page with multi-profile support."""
+# Compressed static HTML chunks for memory efficiency with improved UI/UX
+HTML_HEADER = b"HTTP/1.0 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<!DOCTYPE html><html lang=\"zh-TW\"><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1.0\"><title>Pi Clock</title><style>:root{--primary:#0288d1;--primary-dark:#0277bd;--primary-light:#4fc3f7;--danger:#d32f2f;--danger-dark:#c62828;--warning:#f57c00;--warning-dark:#e65100;--success:#388e3c;--bg:#f4f7f6;--card:#fff;--sidebar-bg:#fff;--text:#333;--text-light:#666;--border:#ddd;--shadow:rgba(2,136,209,0.15)}*{box-sizing:border-box}body{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}.profile-selector{background:var(--sidebar-bg);border-bottom:2px solid var(--primary);padding:1rem}.profile-selector h2{color:var(--primary);font-size:1.2rem;margin:0 0 0.75rem 0}.profile-select-group{display:flex;gap:0.5rem;align-items:center;max-width:500px;margin:0 auto}.profile-select-group select{flex:1;padding:0.7rem;border:1px solid var(--primary);border-radius:6px;font-size:1rem;background:var(--card);color:var(--text);font-weight:500;cursor:pointer}.profile-select-group select:focus{border-color:var(--primary-dark);outline:none;box-shadow:0 0 0 2px rgba(2,136,209,0.2)}.profile-select-group .btn{flex:0 0 auto;width:auto;min-width:auto;margin:0;padding:0.4rem 0.6rem;font-size:0.85rem;line-height:1.2}.main-content{flex:1;padding:1rem;overflow-y:auto}.container{max-width:700px;margin:auto;background:var(--card);padding:1.25rem;border-radius:12px;box-shadow:0 4px 20px var(--shadow)}h1{text-align:center;color:var(--primary);margin-bottom:1.25rem;font-size:1.75rem}fieldset{border:2px solid var(--primary);border-radius:8px;padding:1rem;margin-bottom:1rem;background:#f9feff}legend{font-weight:600;padding:0 .5rem;color:var(--primary)}label{display:block;font-weight:500;margin-bottom:.4rem;color:var(--text);font-size:0.95rem}input,select{width:100%;padding:0.7rem;border:1px solid var(--border);border-radius:6px;font-size:1rem;background:var(--card);transition:border .2s}input:focus,select:focus{border-color:var(--primary);outline:none;box-shadow:0 0 0 2px rgba(2,136,209,0.2)}input[type='checkbox']{width:auto;margin-right:.5rem;transform:scale(1.2);accent-color:var(--primary)}.form-group{margin-bottom:1rem}.info{font-size:.85rem;color:var(--text-light);margin-top:.25rem;padding:0.5rem;background:#e3f2fd;border-radius:4px;border-left:3px solid var(--primary)}.btn{width:100%;padding:0.8rem;font-size:1rem;font-weight:bold;border:none;border-radius:6px;cursor:pointer;transition:all .2s;margin-top:0.5rem}.btn:disabled{opacity:0.6;cursor:not-allowed}.btn-primary{background:var(--primary);color:#fff}.btn-primary:hover:not(:disabled){background:var(--primary-dark);transform:translateY(-1px)}.btn-primary:active{transform:translateY(0)}.btn-danger{background:var(--danger);color:#fff}.btn-danger:hover:not(:disabled){background:var(--danger-dark)}.btn-warning{background:var(--warning);color:#fff}.btn-warning:hover:not(:disabled){background:var(--warning-dark)}.adc-value{font-weight:bold;color:var(--primary)}.button-group{display:flex;gap:0.5rem;margin-top:1rem;flex-wrap:wrap}.button-group .btn{flex:1;min-width:140px}.danger-zone{margin-top:2rem;border-color:var(--danger)!important;background:#fff5f5!important}.danger-zone legend{color:var(--danger)!important}@media (min-width:768px){.profile-selector{padding:1.5rem}.profile-selector h2{font-size:1.3rem;margin-bottom:1rem}.main-content{padding:1.5rem}.container{padding:1.5rem}h1{font-size:2rem}.button-group .btn{min-width:auto}}</style></head><body><div class=\"profile-selector\"><h2>設定檔管理</h2><div class=\"profile-select-group\">"
+
+HTML_SIDEBAR_END = b"<button class=\"btn btn-primary\" onclick=\"createNewProfile()\" style=\"white-space:nowrap;\">➕ 新增</button></div></div><div class=\"main-content\"><div class=\"container\"><h1>設定檔編輯</h1><form id=\"profile-form\" action=\"/save_profile\" method=\"get\">"
+
+HTML_FOOTER = """<div class="button-group"><button type="submit" class="btn btn-primary" id="save-btn">💾 儲存並重啟</button><button type="button" class="btn btn-danger" onclick="deleteProfile()">🗑️ 刪除設定檔</button></div><fieldset class="danger-zone"><legend>⚠️ 危險區域</legend><p style="font-size:0.9rem;color:#666;margin-bottom:1rem;">完全重置會刪除所有設定檔並恢復出廠設定，此操作無法復原！</p><button type="button" class="btn btn-danger" onclick="factoryReset()">🔥 完全重置系統</button></fieldset></form></div></div><script>
+function updateAdc(){fetch('/adc').then(r=>r.json()).then(d=>{const el=document.getElementById('adc-value');if(el)el.innerText=d.adc;}).catch(e=>console.error(e));}
+function testChime(){const p=document.getElementById('chime_pitch');const v=document.getElementById('chime_volume');if(p&&v)fetch('/test_chime?pitch='+p.value+'&volume='+v.value).catch(e=>console.error(e));}
+function loadProfile(n){window.location.href='/edit_profile?name='+encodeURIComponent(n);}
+function createNewProfile(){const n=prompt('請輸入新設定檔名稱:');if(n&&n.trim()){window.location.href='/new_profile?name='+encodeURIComponent(n.trim());}}
+function deleteProfile(){const el=document.getElementById('profile_name');if(el){const n=el.value;if(confirm('確定要刪除設定檔「'+n+'」嗎？此操作無法復原！')){window.location.href='/delete_profile?name='+encodeURIComponent(n);}}}
+function factoryReset(){const t=prompt('⚠️ 警告：完全重置將刪除所有設定檔並恢復出廠設定！\\n\\n此操作無法復原！\\n\\n請輸入「RESET」確認執行：');if(t==='RESET'){if(confirm('最後確認：您確定要執行完全重置嗎？')){window.location.href='/factory_reset';}}else if(t!==null){alert('輸入錯誤，重置已取消。');}}
+document.addEventListener('DOMContentLoaded',function(){
+setInterval(updateAdc,3000);
+const ps=document.getElementById('profile-select');
+if(ps){ps.addEventListener('change',function(){loadProfile(this.value);});}
+const p=document.getElementById('chime_pitch');
+const v=document.getElementById('chime_volume');
+if(p)p.addEventListener('change',testChime);
+if(v)v.addEventListener('change',testChime);
+let clickCount=0;
+let lastClickTime=0;
+const k=document.getElementById('api_key');
+if(k){k.addEventListener('click',function(){const t=Date.now();if(t-lastClickTime<3000){clickCount++;if(clickCount>=7){k.readOnly=false;k.type='text';k.style.backgroundColor='#fff';clickCount=0;}}else{clickCount=1;}lastClickTime=t;});}
+const form=document.getElementById('profile-form');
+const saveBtn=document.getElementById('save-btn');
+if(form&&saveBtn){form.addEventListener('submit',function(){saveBtn.disabled=true;saveBtn.innerHTML='⏳ 儲存中...';});}
+});
+</script></body></html>""".encode('utf-8')
+
+# Compressed response pages for memory efficiency with countdown timers
+HTML_SUCCESS_PAGE = b"HTTP/1.0 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1.0\"><title>設定完成</title><style>body{font-family:sans-serif;text-align:center;padding:2rem;background:#e8f5e9;margin:0}h1{color:#388e3c;margin-bottom:1rem}p{font-size:1.1rem;color:#666;margin:0.5rem 0}.countdown{font-size:3rem;font-weight:bold;color:#388e3c;margin:1.5rem 0}.progress-bar{width:80%;max-width:300px;height:8px;background:#ddd;border-radius:4px;margin:1rem auto;overflow:hidden}.progress-fill{height:100%;background:#388e3c;width:100%;animation:countdown 5s linear forwards}@keyframes countdown{to{width:0}}</style></head><body><h1>✅ 設定已儲存</h1><p>系統正在重新啟動...</p><div class=\"countdown\" id=\"countdown\">5</div><div class=\"progress-bar\"><div class=\"progress-fill\"></div></div><p style=\"font-size:0.9rem;color:#999;\">請稍候，裝置重啟後會自動連接 WiFi</p><script>let t=5;const el=document.getElementById('countdown');setInterval(()=>{t--;if(t>=0)el.innerText=t;},1000);setTimeout(()=>{window.location.href='/'},5000);</script></body></html>"
+
+HTML_RESET_PAGE = b"HTTP/1.0 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1.0\"><title>完全重置</title><style>body{font-family:sans-serif;text-align:center;padding:2rem;background:#ffebee;margin:0}h1{color:#d32f2f;margin-bottom:1rem}p{font-size:1.1rem;color:#666;margin:0.5rem 0}.countdown{font-size:3rem;font-weight:bold;color:#d32f2f;margin:1.5rem 0}.progress-bar{width:80%;max-width:300px;height:8px;background:#ddd;border-radius:4px;margin:1rem auto;overflow:hidden}.progress-fill{height:100%;background:#d32f2f;width:100%;animation:countdown 5s linear forwards}@keyframes countdown{to{width:0}}</style></head><body><h1>🔥 完全重置完成</h1><p>所有設定檔已刪除，系統已恢復出廠設定</p><div class=\"countdown\" id=\"countdown\">5</div><div class=\"progress-bar\"><div class=\"progress-fill\"></div></div><p style=\"font-size:0.9rem;color:#999;\">系統即將重新啟動...</p><script>let t=5;const el=document.getElementById('countdown');setInterval(()=>{t--;if(t>=0)el.innerText=t;},1000);setTimeout(()=>{window.location.href='/'},5000);</script></body></html>"
+
+HTML_ERROR_PAGE_PREFIX = b"HTTP/1.0 400 Bad Request\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<html><head><meta charset=\"utf-8\"><title>錯誤</title></head><body><h1>儲存失敗</h1><p>"
+HTML_ERROR_PAGE_SUFFIX = b"</p><a href=\"/\">返回</a></body></html>"
+
+HTML_RESET_ERROR_PREFIX = b"HTTP/1.0 500 Internal Server Error\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<html><head><meta charset=\"utf-8\"><title>錯誤</title></head><body><h1>重置失敗</h1><p>"
+HTML_RESET_ERROR_SUFFIX = b"</p><a href=\"/\">返回</a></body></html>"
+
+def send_chunk(cl, data):
+    """
+    可靠地分段傳送資料，並加入微小延遲以防止緩衝區溢位。
+    解決頁面載入不全或傳送失敗的問題。
+    """
+    total_sent = 0
+    while total_sent < len(data):
+        try:
+            sent = cl.send(data[total_sent:])
+            if sent == 0:
+                raise OSError("Socket connection broken")
+            total_sent += sent
+            # 關鍵：每次傳送後暫停 10ms，讓 Pico W 的網路堆疊有時間清空緩衝區
+            time.sleep(0.01)
+        except OSError as e:
+            print(f"Error sending chunk: {e}")
+            break
+
+def send_html_page(cl, networks, current_profile=None):
+    """Sends configuration HTML page using chunked sending with improved stability and UI."""
 
     # Get all profiles
     profiles = []
@@ -136,207 +193,86 @@ def generate_html_page(networks, current_profile=None):
         current_profile = config_manager.get_active_profile()
 
     # Global settings
-    global_vals = {
-        "api_key": config_manager.get_global("weather_api_key", ""),
-        "ap_ssid": config_manager.get("ap_mode.ssid", "Pi_Clock_AP"),
-        "ap_password": config_manager.get("ap_mode.password", "12345678"),
-        "adc_value": machine.ADC(machine.Pin(26)).read_u16()
-    }
+    api_key = config_manager.get_global("weather_api_key", "")
+    ap_ssid = config_manager.get("ap_mode.ssid", "Pi_Clock_AP")
+    ap_password = config_manager.get("ap_mode.password", "12345678")
+    adc_value = machine.ADC(machine.Pin(26)).read_u16()
 
-    # Current profile settings (for editing)
-    profile_vals = {
-        "profile_name": current_profile.get("name", "") if current_profile else "",
-        "wifi_ssid": current_profile.get("wifi", {}).get("ssid", "") if current_profile else "",
-        "location": current_profile.get("weather_location", "Taipei") if current_profile else "Taipei",
-        "birthday": current_profile.get("user", {}).get("birthday", "0101") if current_profile else "0101",
-        "image_interval_min": current_profile.get("user", {}).get("image_interval_min", 2) if current_profile else 2,
-        "light_threshold": current_profile.get("user", {}).get("light_threshold", 56000) if current_profile else 56000,
-        "timezone_offset": current_profile.get("user", {}).get("timezone_offset", 8) if current_profile else 8,
-        "chime_enabled": "checked" if (current_profile and current_profile.get("chime", {}).get("enabled", False)) else "",
-        "chime_interval_hourly": "selected" if (current_profile and current_profile.get("chime", {}).get("interval") == "hourly") else "",
-        "chime_interval_half": "selected" if (current_profile and current_profile.get("chime", {}).get("interval") == "half_hourly") else "",
-        "chime_pitch": current_profile.get("chime", {}).get("pitch", 880) if current_profile else 880,
-        "chime_volume": current_profile.get("chime", {}).get("volume", 80) if current_profile else 80,
-    }
+    # Current profile settings
+    profile_name = current_profile.get("name", "") if current_profile else ""
+    wifi_ssid = current_profile.get("wifi", {}).get("ssid", "") if current_profile else ""
+    location = current_profile.get("weather_location", "Taipei") if current_profile else "Taipei"
+    birthday = current_profile.get("user", {}).get("birthday", "0101") if current_profile else "0101"
+    image_interval = current_profile.get("user", {}).get("image_interval_min", 2) if current_profile else 2
+    light_threshold = current_profile.get("user", {}).get("light_threshold", 56000) if current_profile else 56000
+    timezone = current_profile.get("user", {}).get("timezone_offset", 8) if current_profile else 8
+    chime_enabled = "checked" if (current_profile and current_profile.get("chime", {}).get("enabled", False)) else ""
+    chime_interval = current_profile.get("chime", {}).get("interval", "hourly") if current_profile else "hourly"
+    chime_pitch = current_profile.get("chime", {}).get("pitch", 880) if current_profile else 880
+    chime_volume = current_profile.get("chime", {}).get("volume", 80) if current_profile else 80
 
-    # Generate SSID options
-    ssid_options = ""
+    # 1. Send header and CSS (使用 send_chunk)
+    send_chunk(cl, HTML_HEADER)
+
+    # 2. Send profile selector (UI 改良：手機版下拉選單)
+    active_profile_name = config_manager.get_active_profile_name()
+
+    # 使用 <select> 下拉選單取代橫向捲動的 <div> 列表（事件綁定在 JavaScript 中）
+    send_chunk(cl, '<select id="profile-select">'.encode('utf-8'))
+
+    send_chunk(cl, '<option value="" disabled>-- 切換設定檔 --</option>'.encode('utf-8'))
+
+    for p in profiles:
+        # selected 指向正在編輯的設定檔
+        selected = "selected" if p["name"] == profile_name else ""
+
+        # 顯示設定檔名稱，加上狀態標籤
+        option_text = p["name"]
+        if p["name"] == active_profile_name and p["name"] == profile_name:
+            # 既是啟用的又是正在編輯的
+            option_text += " ●"
+        elif p["name"] == active_profile_name:
+            # 僅是啟用的
+            option_text += " (啟用)"
+        elif p["name"] == profile_name:
+            # 僅是正在編輯的
+            option_text += " ●"
+
+        send_chunk(cl, f'<option value="{p["name"]}" {selected}>{option_text}</option>'.encode('utf-8'))
+
+    send_chunk(cl, b'</select>')
+
+    # 3. Send sidebar end and form start (包含新增按鈕)
+    send_chunk(cl, HTML_SIDEBAR_END)
+
+    # 4. Send form fields (全部改用 send_chunk)
+    send_chunk(cl, f'<input type="hidden" id="original_profile_name" name="original_profile_name" value="{profile_name}">'.encode('utf-8'))
+    send_chunk(cl, f'<fieldset><legend>設定檔資訊</legend><div class="form-group"><label for="profile_name">設定檔名稱:</label><input id="profile_name" name="profile_name" value="{profile_name}" required></div></fieldset>'.encode('utf-8'))
+
+    # WiFi section
+    send_chunk(cl, '<fieldset><legend>Wi-Fi 連線</legend><div class="form-group"><label for="ssid">SSID:</label><select id="ssid" name="ssid">'.encode('utf-8'))
     for net in networks:
         ssid = net['ssid'] if isinstance(net, dict) else net
-        selected = "selected" if ssid == profile_vals['wifi_ssid'] else ""
-        ssid_options += f'<option value="{ssid}" {selected}>{ssid}</option>'
+        sel = "selected" if ssid == wifi_ssid else ""
+        send_chunk(cl, f'<option value="{ssid}" {sel}>{ssid}</option>'.encode('utf-8'))
+    send_chunk(cl, '</select></div><div class="form-group"><label for="password">密碼:</label><input type="password" id="password" name="password"></div></fieldset>'.encode('utf-8'))
 
-    # Generate profile list for sidebar
-    profile_list_html = ""
-    active_profile_name = config_manager.get_active_profile_name()
-    for profile in profiles:
-        active_badge = " 🔵" if profile["name"] == active_profile_name else ""
-        profile_list_html += f'<div class="profile-item" onclick="loadProfile(\'{profile["name"]}\')">{profile["name"]}{active_badge}</div>'
+    # Weather section
+    send_chunk(cl, f'<fieldset><legend>天氣與個人化</legend><div class="form-group"><label for="location">天氣地點:</label><input id="location" name="location" value="{location}"></div><div class="form-group"><label for="birthday">生日 (MMDD):</label><input id="birthday" name="birthday" value="{birthday}"></div></fieldset>'.encode('utf-8'))
 
-    html = """HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n
-<!DOCTYPE html>
-<html lang="zh-TW">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Pi Clock 多設定檔管理</title>
-<style>
-body{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f0f8ff;color:#333;display:flex;min-height:100vh}
-.sidebar{width:250px;background:#fff;border-right:2px solid #03d3fc;padding:1rem;overflow-y:auto}
-.sidebar h2{color:#03d3fc;font-size:1.3rem;margin:0 0 1rem 0}
-.profile-item{padding:0.75rem;margin:0.5rem 0;background:#f9fdff;border:1px solid #03d3fc;border-radius:6px;cursor:pointer;transition:all .2s}
-.profile-item:hover{background:#e6f9ff;transform:translateX(3px)}
-.add-profile-btn{width:100%;padding:0.75rem;background:#03d3fc;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:bold;margin-top:1rem}
-.add-profile-btn:hover{background:#02b8d4}
-.main-content{flex:1;padding:1.5rem;overflow-y:auto}
-.container{max-width:700px;margin:auto;background:#fff;padding:1.5rem;border-radius:12px;box-shadow:0 4px 20px rgba(3,211,252,0.15)}
-h1{text-align:center;color:#03d3fc;margin-bottom:1.5rem;font-size:2rem}
-fieldset{border:2px solid #03d3fc;border-radius:8px;padding:1rem;margin-bottom:1rem;background:#f9fdff}
-legend{font-weight:600;padding:0 .5rem;color:#03d3fc}
-label{display:block;font-weight:500;margin-bottom:.5rem;color:#333}
-input,select{width:100%;padding:0.75rem;box-sizing:border-box;border:1px solid #03d3fc;border-radius:6px;font-size:1rem;background:#fff}
-input:focus,select:focus{border-color:#02b8d4;outline:none;box-shadow:0 0 0 2px rgba(3,211,252,0.2)}
-input[type='checkbox']{width:auto;margin-right:.5rem;transform:scale(1.2);accent-color:#03d3fc}
-.form-group{margin-bottom:1rem}
-.info{font-size:.9rem;color:#666;margin-top:.25rem;padding:0.5rem;background:#e6f9ff;border-radius:4px}
-.submit-btn{width:100%;padding:1rem;font-size:1.1rem;font-weight:bold;color:#fff;background:#03d3fc;border:none;border-radius:6px;cursor:pointer;transition:all .2s}
-.submit-btn:hover{background:#02b8d4;transform:translateY(-1px)}
-.delete-btn{width:100%;padding:0.75rem;font-size:1rem;font-weight:bold;color:#fff;background:#ff4444;border:none;border-radius:6px;cursor:pointer;transition:all .2s;margin-top:0.5rem}
-.delete-btn:hover{background:#cc0000}
-.test-btn{width:100%;padding:0.75rem;font-size:1rem;font-weight:bold;color:#fff;background:#ff9800;border:none;border-radius:6px;cursor:pointer;transition:all .2s;margin-top:0.5rem}
-.test-btn:hover{background:#e68900}
-.adc-value{font-weight:bold;color:#03d3fc}
-.button-group{display:flex;gap:0.5rem;margin-top:1rem}
-.button-group button{flex:1}
-@media (max-width: 768px){
-body{flex-direction:column}
-.sidebar{width:100%;border-right:none;border-bottom:2px solid #03d3fc}
-}
-</style>
-</head>
-<body>
-<div class="sidebar">
-<h2>設定檔列表</h2>
-<div id="profile-list">""" + profile_list_html + """</div>
-<button class="add-profile-btn" onclick="createNewProfile()">➕ 新增設定檔</button>
-</div>
+    # System settings
+    send_chunk(cl, f'<fieldset><legend>系統設定</legend><div class="form-group"><label for="image_interval_min">圖片輪播間隔 (分鐘):</label><input type="number" id="image_interval_min" name="image_interval_min" value="{image_interval}"></div><div class="form-group"><label for="light_threshold">光感臨界值 (ADC):</label><input type="number" id="light_threshold" name="light_threshold" value="{light_threshold}"><p class="info">目前光感值: <span class="adc-value" id="adc-value">{adc_value}</span></p></div><div class="form-group"><label for="timezone_offset">時區偏移 (小時):</label><input type="number" id="timezone_offset" name="timezone_offset" value="{timezone}"></div></fieldset>'.encode('utf-8'))
 
-<div class="main-content">
-<div class="container">
-<h1>設定檔編輯</h1>
-<form id="profile-form" action="/save_profile" method="get">
+    # Chime settings
+    hourly_sel = "selected" if chime_interval == "hourly" else ""
+    half_sel = "selected" if chime_interval == "half_hourly" else ""
+    send_chunk(cl, f'<fieldset><legend>定時響聲</legend><div class="form-group" style="display:flex;align-items:center;"><input type="checkbox" id="chime_enabled" name="chime_enabled" value="true" {chime_enabled}><label for="chime_enabled" style="margin-bottom:0;">啟用定時響聲</label></div><div class="form-group"><label for="chime_interval">響聲間隔:</label><select id="chime_interval" name="chime_interval"><option value="hourly" {hourly_sel}>每小時</option><option value="half_hourly" {half_sel}>每半小時</option></select></div><div class="form-group"><label for="chime_pitch">音高 (Hz):</label><input type="number" id="chime_pitch" name="chime_pitch" value="{chime_pitch}"></div><div class="form-group"><label for="chime_volume">音量 (0-100):</label><input type="number" id="chime_volume" name="chime_volume" value="{chime_volume}"><button type="button" class="btn btn-warning" onclick="testChime()">🔊 測試響聲</button></div></fieldset>'.encode('utf-8'))
 
-<input type="hidden" id="original_profile_name" name="original_profile_name" value=\"""" + profile_vals['profile_name'] + """\">
+    # Global settings
+    send_chunk(cl, f'<fieldset><legend>全局設定 (所有設定檔共用)</legend><div class="form-group"><label for="api_key">天氣 API Key:</label><input type="password" id="api_key" name="api_key" value="{api_key}" readonly></div><div class="form-group"><label for="ap_mode_ssid">AP 模式 SSID:</label><input id="ap_mode_ssid" name="ap_mode_ssid" value="{ap_ssid}"></div><div class="form-group"><label for="ap_mode_password">AP 模式密碼:</label><input type="password" id="ap_mode_password" name="ap_mode_password" value="{ap_password}"></div></fieldset>'.encode('utf-8'))
 
-<fieldset><legend>設定檔資訊</legend>
-<div class="form-group"><label for="profile_name">設定檔名稱:</label><input id="profile_name" name="profile_name" value=\"""" + profile_vals['profile_name'] + """\" required></div>
-</fieldset>
-
-<fieldset><legend>Wi-Fi 連線</legend>
-<div class="form-group"><label for="ssid">SSID:</label><select id="ssid" name="ssid">""" + ssid_options + """</select></div>
-<div class="form-group"><label for="password">密碼:</label><input type="password" id="password" name="password"></div>
-</fieldset>
-
-<fieldset><legend>天氣與個人化</legend>
-<div class="form-group"><label for="location">天氣地點:</label><input id="location" name="location" value=\"""" + profile_vals['location'] + """\"></div>
-<div class="form-group"><label for="birthday">生日 (MMDD):</label><input id="birthday" name="birthday" value=\"""" + profile_vals['birthday'] + """\"></div>
-</fieldset>
-
-<fieldset><legend>系統設定</legend>
-<div class="form-group"><label for="image_interval_min">圖片輪播間隔 (分鐘):</label><input type="number" id="image_interval_min" name="image_interval_min" value=\"""" + str(profile_vals['image_interval_min']) + """\"></div>
-<div class="form-group"><label for="light_threshold">光感臨界值 (ADC):</label><input type="number" id="light_threshold" name="light_threshold" value=\"""" + str(profile_vals['light_threshold']) + """\"><p class="info">目前光感值: <span class="adc-value" id="adc-value">""" + str(global_vals['adc_value']) + """</span></p></div>
-<div class="form-group"><label for="timezone_offset">時區偏移 (小時):</label><input type="number" id="timezone_offset" name="timezone_offset" value=\"""" + str(profile_vals['timezone_offset']) + """\"></div>
-</fieldset>
-
-<fieldset><legend>定時響聲</legend>
-<div class="form-group" style="display:flex;align-items:center;"><input type="checkbox" id="chime_enabled" name="chime_enabled" value="true" """ + profile_vals['chime_enabled'] + """><label for="chime_enabled" style="margin-bottom:0;">啟用定時響聲</label></div>
-<div class="form-group"><label for="chime_interval">響聲間隔:</label><select id="chime_interval" name="chime_interval"><option value="hourly" """ + profile_vals['chime_interval_hourly'] + """>每小時</option><option value="half_hourly" """ + profile_vals['chime_interval_half'] + """>每半小時</option></select></div>
-<div class="form-group"><label for="chime_pitch">音高 (Hz):</label><input type="number" id="chime_pitch" name="chime_pitch" value=\"""" + str(profile_vals['chime_pitch']) + """\"></div>
-<div class="form-group"><label for="chime_volume">音量 (0-100):</label><input type="number" id="chime_volume" name="chime_volume" value=\"""" + str(profile_vals['chime_volume']) + """\"><button type="button" class="test-btn" onclick="testChime()">測試響聲</button></div>
-</fieldset>
-
-<fieldset><legend>全局設定 (所有設定檔共用)</legend>
-<div class="form-group"><label for="api_key">天氣 API Key:</label><input type="password" id="api_key" name="api_key" value=\"""" + global_vals['api_key'] + """\" readonly></div>
-<div class="form-group"><label for="ap_mode_ssid">AP 模式 SSID:</label><input id="ap_mode_ssid" name="ap_mode_ssid" value=\"""" + global_vals['ap_ssid'] + """\"></div>
-<div class="form-group"><label for="ap_mode_password">AP 模式密碼:</label><input type="password" id="ap_mode_password" name="ap_mode_password" value=\"""" + global_vals['ap_password'] + """\"></div>
-</fieldset>
-
-<div class="button-group">
-<button type="submit" class="submit-btn">💾 儲存並重啟</button>
-<button type="button" class="delete-btn" onclick="deleteProfile()">🗑️ 刪除設定檔</button>
-</div>
-
-<fieldset style="margin-top:2rem;border-color:#ff4444;background:#fff5f5;"><legend style="color:#ff4444;">⚠️ 危險區域</legend>
-<p style="font-size:0.9rem;color:#666;margin-bottom:1rem;">完全重置會刪除所有設定檔並恢復出廠設定，此操作無法復原！</p>
-<button type="button" class="delete-btn" onclick="factoryReset()" style="background:#ff0000;">🔥 完全重置系統</button>
-</fieldset>
-
-</form>
-</div>
-</div>
-
-<script>
-let clickCount = 0;
-let lastClickTime = 0;
-const apiKeyInput = document.getElementById('api_key');
-
-function updateAdc(){fetch('/adc').then(r=>r.json()).then(d=>{document.getElementById('adc-value').innerText=d.adc;}).catch(e=>console.error(e));}
-function testChime(){const p=document.getElementById('chime_pitch').value;const v=document.getElementById('chime_volume').value;fetch('/test_chime?pitch='+p+'&volume='+v).catch(e=>console.error(e));}
-
-function loadProfile(profileName){
-    window.location.href = '/edit_profile?name=' + encodeURIComponent(profileName);
-}
-
-function createNewProfile(){
-    const newName = prompt('請輸入新設定檔名稱:');
-    if(newName && newName.trim()){
-        window.location.href = '/new_profile?name=' + encodeURIComponent(newName.trim());
-    }
-}
-
-function deleteProfile(){
-    const profileName = document.getElementById('profile_name').value;
-    if(confirm('確定要刪除設定檔「' + profileName + '」嗎？此操作無法復原！')){
-        window.location.href = '/delete_profile?name=' + encodeURIComponent(profileName);
-    }
-}
-
-function factoryReset(){
-    const confirmText = prompt('⚠️ 警告：完全重置將刪除所有設定檔並恢復出廠設定！\\n\\n此操作無法復原！\\n\\n請輸入「RESET」確認執行：');
-    if(confirmText === 'RESET'){
-        if(confirm('最後確認：您確定要執行完全重置嗎？')){
-            window.location.href = '/factory_reset';
-        }
-    } else if(confirmText !== null) {
-        alert('輸入錯誤，重置已取消。');
-    }
-}
-
-apiKeyInput.addEventListener('click', () => {
-    const currentTime = Date.now();
-    if (currentTime - lastClickTime < 3000) {
-        clickCount++;
-        if (clickCount >= 7) {
-            apiKeyInput.readOnly = false;
-            apiKeyInput.type = 'text';
-            apiKeyInput.style.backgroundColor = '#fff';
-            clickCount = 0;
-        }
-    } else {
-        clickCount = 1;
-    }
-    lastClickTime = currentTime;
-});
-
-document.addEventListener('DOMContentLoaded',()=>{
-    setInterval(updateAdc,3000);
-    document.getElementById('chime_pitch').addEventListener('change',testChime);
-    document.getElementById('chime_volume').addEventListener('change',testChime);
-});
-</script>
-</body>
-</html>"""
-    return html
+    # Send footer with JavaScript
+    send_chunk(cl, HTML_FOOTER)
 
 def run_web_server():
     """Runs a simple web server to handle configuration requests with multi-profile support."""
@@ -404,11 +340,18 @@ def run_web_server():
             try:
                 cl_file = cl.makefile("rwb", 0)
                 request = ""
+                max_request_size = 2048  # 2KB limit to prevent memory exhaustion
 
                 while True:
                     try:
                         line = cl_file.readline()
                         if not line or line == b"\r\n":
+                            break
+                        # Check request size limit
+                        if len(request) + len(line) > max_request_size:
+                            print("Warning: Request too large, rejecting.")
+                            cl.send(b"HTTP/1.0 413 Request Entity Too Large\r\n\r\n")
+                            cl.close()
                             break
                         request += line.decode()
                     except OSError:
@@ -463,8 +406,7 @@ def run_web_server():
                     profile = config_manager.get_profile(profile_name)
                     if profile:
                         networks = scan_networks()
-                        page = generate_html_page(networks, profile)
-                        cl.send(page.encode())
+                        send_html_page(cl, networks, profile)
                     else:
                         cl.send(b"HTTP/1.0 404 Not Found\r\n\r\nProfile not found")
                     cl.close()
@@ -548,16 +490,8 @@ def run_web_server():
                         # Perform factory reset
                         factory_reset()
 
-                        # Send success page
-                        reset_page = """HTTP/1.0 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n
-<html><head><meta charset="utf-8"><title>完全重置</title>
-<style>body{font-family:sans-serif;text-align:center;padding:2rem;background:#fff0f0}
-h1{color:#ff0000}p{font-size:1.2rem;color:#666}</style></head>
-<body><h1>🔥 完全重置完成</h1><p>所有設定檔已刪除，系統已恢復出廠設定。</p>
-<p>系統將在 5 秒後重新啟動...</p>
-<script>setTimeout(()=>{window.location.href='/'},5000)</script></body></html>"""
-
-                        cl.send(reset_page.encode())
+                        # Send success page (compressed constant)
+                        cl.send(HTML_RESET_PAGE)
                         cl.close()
 
                         # Restart system
@@ -569,10 +503,10 @@ h1{color:#ff0000}p{font-size:1.2rem;color:#666}</style></head>
 
                     except Exception as e:
                         print(f"Error: Factory reset failed. {e}")
-                        error_page = """HTTP/1.0 500 Internal Server Error\r\nContent-Type: text/html; charset=utf-8\r\n\r\n
-<html><head><meta charset="utf-8"><title>錯誤</title></head>
-<body><h1>重置失敗</h1><p>""" + str(e) + """</p><a href="/">返回</a></body></html>"""
-                        cl.send(error_page.encode())
+                        # Send error page using chunked sending
+                        cl.send(HTML_RESET_ERROR_PREFIX)
+                        cl.send(str(e).encode('utf-8'))
+                        cl.send(HTML_RESET_ERROR_SUFFIX)
                         cl.close()
                         continue
 
@@ -627,15 +561,8 @@ h1{color:#ff0000}p{font-size:1.2rem;color:#666}</style></head>
 
                         print(f"Success: Profile '{new_name}' saved and activated.")
 
-                        # Send success page and restart
-                        success_page = """HTTP/1.0 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n
-<html><head><meta charset="utf-8"><title>設定完成</title>
-<style>body{font-family:sans-serif;text-align:center;padding:2rem;background:#f0f8ff}
-h1{color:#03d3fc}p{font-size:1.2rem;color:#666}</style></head>
-<body><h1>✅ 設定已儲存</h1><p>系統將在 5 秒後重新啟動...</p>
-<script>setTimeout(()=>{window.location.href='/'},5000)</script></body></html>"""
-
-                        cl.send(success_page.encode())
+                        # Send success page (compressed constant)
+                        cl.send(HTML_SUCCESS_PAGE)
                         cl.close()
 
                         update_display_Restart()
@@ -646,21 +573,20 @@ h1{color:#03d3fc}p{font-size:1.2rem;color:#666}</style></head>
 
                     except Exception as e:
                         print(f"Error: Failed to save profile. {e}")
-                        error_page = """HTTP/1.0 400 Bad Request\r\nContent-Type: text/html; charset=utf-8\r\n\r\n
-<html><head><meta charset="utf-8"><title>錯誤</title></head>
-<body><h1>儲存失敗</h1><p>""" + str(e) + """</p><a href="/">返回</a></body></html>"""
-                        cl.send(error_page.encode())
+                        # Send error page using chunked sending
+                        cl.send(HTML_ERROR_PAGE_PREFIX)
+                        cl.send(str(e).encode('utf-8'))
+                        cl.send(HTML_ERROR_PAGE_SUFFIX)
                         cl.close()
                         continue
 
                 # Default: show main page
                 try:
                     networks = scan_networks()
-                    page = generate_html_page(networks)
-                    cl.send(page.encode())
+                    send_html_page(cl, networks)
                     cl.close()
                 except Exception as e:
-                    print(f"Error: Failed to generate page. {e}")
+                    print(f"Error: Failed to send page. {e}")
                     try:
                         cl.close()
                     except:
