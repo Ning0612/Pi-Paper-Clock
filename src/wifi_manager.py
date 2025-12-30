@@ -10,6 +10,39 @@ from config_manager import config_manager
 from chime import Chime
 from hardware_manager import HardwareManager
 
+# Phase 3: CSRF 防護 - 全域 Token (啟動時生成)
+# 使用時間戳 + ADC 噪音生成隨機 token (MicroPython 相容)
+def _generate_csrf_token():
+    """Generates a simple CSRF token using timestamp and ADC noise."""
+    try:
+        # 使用 ADC 讀取（電磁噪音）和時間戳生成隨機性
+        adc = machine.ADC(machine.Pin(26))
+        noise = adc.read_u16()
+        timestamp = time.ticks_ms()
+        # 組合生成 token (16進位字串)
+        token_value = (timestamp * 31 + noise) & 0xFFFFFFFF
+        return hex(token_value)[2:]  # 移除 '0x' 前綴
+    except:
+        # 降級方案：僅使用時間戳
+        return hex(time.ticks_ms() & 0xFFFFFFFF)[2:]
+
+CSRF_TOKEN = _generate_csrf_token()
+
+def verify_csrf_token(params):
+    """Verifies CSRF token from request parameters.
+
+    Args:
+        params: Dictionary of request parameters
+
+    Returns:
+        bool: True if token is valid, False otherwise
+    """
+    token = params.get("csrf_token", "")
+    is_valid = token == CSRF_TOKEN
+    if not is_valid:
+        print(f"CSRF validation failed: expected={CSRF_TOKEN}, got={token}")
+    return is_valid
+
 def reset_wifi_and_reboot():
     """Sets force AP mode flag and reboots to enter configuration mode."""
     print("Long press detected. Entering AP mode for configuration...")
@@ -93,6 +126,27 @@ def parse_query_string(query_string):
 
     return params
 
+def html_escape(text):
+    """Escapes HTML special characters to prevent XSS attacks.
+
+    Args:
+        text: String to escape (will be converted to string if not)
+
+    Returns:
+        Escaped string safe for HTML insertion
+
+    Example:
+        >>> html_escape('<script>alert("XSS")</script>')
+        '&lt;script&gt;alert(&quot;XSS&quot;)&lt;/script&gt;'
+    """
+    if not isinstance(text, str):
+        text = str(text)
+    return (text.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace('"', "&quot;")
+                .replace("'", "&#39;"))
+
 def scan_networks():
     """Scans for available Wi-Fi networks and returns with signal strength."""
     sta = network.WLAN(network.STA_IF)
@@ -125,12 +179,13 @@ HTML_HEADER = b"HTTP/1.0 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\
 HTML_SIDEBAR_END = b"<button class=\"btn btn-primary\" onclick=\"createNewProfile()\" style=\"white-space:nowrap;\">➕ 新增</button></div></div><div class=\"main-content\"><div class=\"container\"><h1>設定檔編輯</h1><form id=\"profile-form\" action=\"/save_profile\" method=\"get\">"
 
 HTML_FOOTER = """<div class="button-group"><button type="submit" class="btn btn-primary" id="save-btn">💾 儲存並重啟</button><button type="button" class="btn btn-danger" onclick="deleteProfile()">🗑️ 刪除設定檔</button></div><fieldset class="danger-zone"><legend>⚠️ 危險區域</legend><p style="font-size:0.9rem;color:#666;margin-bottom:1rem;">完全重置會刪除所有設定檔並恢復出廠設定，此操作無法復原！</p><button type="button" class="btn btn-danger" onclick="factoryReset()">🔥 完全重置系統</button></fieldset></form></div></div><script>
+function getCsrfToken(){const el=document.querySelector('input[name="csrf_token"]');return el?el.value:'';}
 function updateAdc(){fetch('/adc').then(r=>r.json()).then(d=>{const el=document.getElementById('adc-value');if(el)el.innerText=d.adc;}).catch(e=>console.error(e));}
-function testChime(){const p=document.getElementById('chime_pitch');const v=document.getElementById('chime_volume');if(p&&v)fetch('/test_chime?pitch='+p.value+'&volume='+v.value).catch(e=>console.error(e));}
+function testChime(){const p=document.getElementById('chime_pitch');const v=document.getElementById('chime_volume');const t=getCsrfToken();if(p&&v)fetch('/test_chime?pitch='+p.value+'&volume='+v.value+'&csrf_token='+t).catch(e=>console.error(e));}
 function loadProfile(n){window.location.href='/edit_profile?name='+encodeURIComponent(n);}
-function createNewProfile(){const n=prompt('請輸入新設定檔名稱:');if(n&&n.trim()){window.location.href='/new_profile?name='+encodeURIComponent(n.trim());}}
-function deleteProfile(){const el=document.getElementById('profile_name');if(el){const n=el.value;if(confirm('確定要刪除設定檔「'+n+'」嗎？此操作無法復原！')){window.location.href='/delete_profile?name='+encodeURIComponent(n);}}}
-function factoryReset(){const t=prompt('⚠️ 警告：完全重置將刪除所有設定檔並恢復出廠設定！\\n\\n此操作無法復原！\\n\\n請輸入「RESET」確認執行：');if(t==='RESET'){if(confirm('最後確認：您確定要執行完全重置嗎？')){window.location.href='/factory_reset';}}else if(t!==null){alert('輸入錯誤，重置已取消。');}}
+function createNewProfile(){const n=prompt('請輸入新設定檔名稱:');if(n&&n.trim()){const t=getCsrfToken();window.location.href='/new_profile?name='+encodeURIComponent(n.trim())+'&csrf_token='+t;}}
+function deleteProfile(){const el=document.getElementById('profile_name');if(el){const n=el.value;const t=getCsrfToken();const escaped=n.replace(/'/g,"\\\\'");if(confirm('確定要刪除設定檔「'+escaped+'」嗎？此操作無法復原！')){window.location.href='/delete_profile?name='+encodeURIComponent(n)+'&csrf_token='+t;}}}
+function factoryReset(){const t=prompt('⚠️ 警告：完全重置將刪除所有設定檔並恢復出廠設定！\\n\\n此操作無法復原！\\n\\n請輸入「RESET」確認執行：');if(t==='RESET'){if(confirm('最後確認：您確定要執行完全重置嗎？')){const csrf=getCsrfToken();window.location.href='/factory_reset?csrf_token='+csrf;}}else if(t!==null){alert('輸入錯誤，重置已取消。');}}
 document.addEventListener('DOMContentLoaded',function(){
 setInterval(updateAdc,3000);
 const ps=document.getElementById('profile-select');
@@ -238,7 +293,7 @@ def send_html_page(cl, networks, current_profile=None):
             # 僅是正在編輯的
             option_text += " ●"
 
-        send_chunk(cl, f'<option value="{p["name"]}" {selected}>{option_text}</option>'.encode('utf-8'))
+        send_chunk(cl, f'<option value="{html_escape(p["name"])}" {selected}>{html_escape(option_text)}</option>'.encode('utf-8'))
 
     send_chunk(cl, b'</select>')
 
@@ -246,30 +301,35 @@ def send_html_page(cl, networks, current_profile=None):
     send_chunk(cl, HTML_SIDEBAR_END)
 
     # 4. Send form fields (全部改用 send_chunk)
-    send_chunk(cl, f'<input type="hidden" id="original_profile_name" name="original_profile_name" value="{profile_name}">'.encode('utf-8'))
-    send_chunk(cl, f'<fieldset><legend>設定檔資訊</legend><div class="form-group"><label for="profile_name">設定檔名稱:</label><input id="profile_name" name="profile_name" value="{profile_name}" required></div></fieldset>'.encode('utf-8'))
+    # Phase 3: CSRF Token (隱藏欄位)
+    send_chunk(cl, f'<input type="hidden" name="csrf_token" value="{CSRF_TOKEN}">'.encode('utf-8'))
+    send_chunk(cl, f'<input type="hidden" id="original_profile_name" name="original_profile_name" value="{html_escape(profile_name)}">'.encode('utf-8'))
+    send_chunk(cl, f'<fieldset><legend>設定檔資訊</legend><div class="form-group"><label for="profile_name">設定檔名稱:</label><input id="profile_name" name="profile_name" value="{html_escape(profile_name)}" required></div></fieldset>'.encode('utf-8'))
 
     # WiFi section
     send_chunk(cl, '<fieldset><legend>Wi-Fi 連線</legend><div class="form-group"><label for="ssid">SSID:</label><select id="ssid" name="ssid">'.encode('utf-8'))
     for net in networks:
         ssid = net['ssid'] if isinstance(net, dict) else net
         sel = "selected" if ssid == wifi_ssid else ""
-        send_chunk(cl, f'<option value="{ssid}" {sel}>{ssid}</option>'.encode('utf-8'))
-    send_chunk(cl, '</select></div><div class="form-group"><label for="password">密碼:</label><input type="password" id="password" name="password"></div></fieldset>'.encode('utf-8'))
+        send_chunk(cl, f'<option value="{html_escape(ssid)}" {sel}>{html_escape(ssid)}</option>'.encode('utf-8'))
+    # 密碼欄位不顯示已儲存密碼（安全性改進）
+    send_chunk(cl, '</select></div><div class="form-group"><label for="password">密碼:</label><input type="password" id="password" name="password" placeholder="已設定（留空表示不修改）"></div></fieldset>'.encode('utf-8'))
 
     # Weather section
-    send_chunk(cl, f'<fieldset><legend>天氣與個人化</legend><div class="form-group"><label for="location">天氣地點:</label><input id="location" name="location" value="{location}"></div><div class="form-group"><label for="birthday">生日 (MMDD):</label><input id="birthday" name="birthday" value="{birthday}"></div></fieldset>'.encode('utf-8'))
+    send_chunk(cl, f'<fieldset><legend>天氣與個人化</legend><div class="form-group"><label for="location">天氣地點:</label><input id="location" name="location" value="{html_escape(location)}"></div><div class="form-group"><label for="birthday">生日 (MMDD):</label><input id="birthday" name="birthday" value="{html_escape(birthday)}"></div></fieldset>'.encode('utf-8'))
 
     # System settings
-    send_chunk(cl, f'<fieldset><legend>系統設定</legend><div class="form-group"><label for="image_interval_min">圖片輪播間隔 (分鐘):</label><input type="number" id="image_interval_min" name="image_interval_min" value="{image_interval}"></div><div class="form-group"><label for="light_threshold">光感臨界值 (ADC):</label><input type="number" id="light_threshold" name="light_threshold" value="{light_threshold}"><p class="info">目前光感值: <span class="adc-value" id="adc-value">{adc_value}</span></p></div><div class="form-group"><label for="timezone_offset">時區偏移 (小時):</label><input type="number" id="timezone_offset" name="timezone_offset" value="{timezone}"></div></fieldset>'.encode('utf-8'))
+    send_chunk(cl, f'<fieldset><legend>系統設定</legend><div class="form-group"><label for="image_interval_min">圖片輪播間隔 (分鐘):</label><input type="number" id="image_interval_min" name="image_interval_min" value="{html_escape(str(image_interval))}"></div><div class="form-group"><label for="light_threshold">光感臨界值 (ADC):</label><input type="number" id="light_threshold" name="light_threshold" value="{html_escape(str(light_threshold))}"><p class="info">目前光感值: <span class="adc-value" id="adc-value">{html_escape(str(adc_value))}</span></p></div><div class="form-group"><label for="timezone_offset">時區偏移 (小時):</label><input type="number" id="timezone_offset" name="timezone_offset" value="{html_escape(str(timezone))}"></div></fieldset>'.encode('utf-8'))
 
     # Chime settings
     hourly_sel = "selected" if chime_interval == "hourly" else ""
     half_sel = "selected" if chime_interval == "half_hourly" else ""
-    send_chunk(cl, f'<fieldset><legend>定時響聲</legend><div class="form-group" style="display:flex;align-items:center;"><input type="checkbox" id="chime_enabled" name="chime_enabled" value="true" {chime_enabled}><label for="chime_enabled" style="margin-bottom:0;">啟用定時響聲</label></div><div class="form-group"><label for="chime_interval">響聲間隔:</label><select id="chime_interval" name="chime_interval"><option value="hourly" {hourly_sel}>每小時</option><option value="half_hourly" {half_sel}>每半小時</option></select></div><div class="form-group"><label for="chime_pitch">音高 (Hz):</label><input type="number" id="chime_pitch" name="chime_pitch" value="{chime_pitch}"></div><div class="form-group"><label for="chime_volume">音量 (0-100):</label><input type="number" id="chime_volume" name="chime_volume" value="{chime_volume}"><button type="button" class="btn btn-warning" onclick="testChime()">🔊 測試響聲</button></div></fieldset>'.encode('utf-8'))
+    send_chunk(cl, f'<fieldset><legend>定時響聲</legend><div class="form-group" style="display:flex;align-items:center;"><input type="checkbox" id="chime_enabled" name="chime_enabled" value="true" {chime_enabled}><label for="chime_enabled" style="margin-bottom:0;">啟用定時響聲</label></div><div class="form-group"><label for="chime_interval">響聲間隔:</label><select id="chime_interval" name="chime_interval"><option value="hourly" {hourly_sel}>每小時</option><option value="half_hourly" {half_sel}>每半小時</option></select></div><div class="form-group"><label for="chime_pitch">音高 (Hz):</label><input type="number" id="chime_pitch" name="chime_pitch" value="{html_escape(str(chime_pitch))}"></div><div class="form-group"><label for="chime_volume">音量 (0-100):</label><input type="number" id="chime_volume" name="chime_volume" value="{html_escape(str(chime_volume))}"><button type="button" class="btn btn-warning" onclick="testChime()">🔊 測試響聲</button></div></fieldset>'.encode('utf-8'))
 
-    # Global settings
-    send_chunk(cl, f'<fieldset><legend>全局設定 (所有設定檔共用)</legend><div class="form-group"><label for="api_key">天氣 API Key:</label><input type="password" id="api_key" name="api_key" value="{api_key}" readonly></div><div class="form-group"><label for="ap_mode_ssid">AP 模式 SSID:</label><input id="ap_mode_ssid" name="ap_mode_ssid" value="{ap_ssid}"></div><div class="form-group"><label for="ap_mode_password">AP 模式密碼:</label><input type="password" id="ap_mode_password" name="ap_mode_password" value="{ap_password}"></div></fieldset>'.encode('utf-8'))
+    # Global settings (Phase 2: 敏感資訊保護 - 不顯示已儲存密碼)
+    # API Key 顯示遮罩或留空
+    api_key_display = f"{api_key[:7]}...{api_key[-4:]}" if api_key and len(api_key) > 11 else ("已設定" if api_key else "")
+    send_chunk(cl, f'<fieldset><legend>全局設定 (所有設定檔共用)</legend><div class="form-group"><label for="api_key">天氣 API Key:</label><input type="text" id="api_key" name="api_key" value="{html_escape(api_key_display)}" placeholder="留空表示不修改" readonly></div><div class="form-group"><label for="ap_mode_ssid">AP 模式 SSID:</label><input id="ap_mode_ssid" name="ap_mode_ssid" value="{html_escape(ap_ssid)}"></div><div class="form-group"><label for="ap_mode_password">AP 模式密碼:</label><input type="password" id="ap_mode_password" name="ap_mode_password" placeholder="已設定（留空表示不修改）"></div></fieldset>'.encode('utf-8'))
 
     # Send footer with JavaScript
     send_chunk(cl, HTML_FOOTER)
@@ -381,6 +441,13 @@ def run_web_server():
                     query_string = request[query_start:query_end]
                     params = parse_query_string(query_string)
 
+                    # Phase 3: CSRF 防護
+                    if not verify_csrf_token(params):
+                        print("Error: CSRF token validation failed for test_chime")
+                        cl.send(b"HTTP/1.1 403 Forbidden\r\n\r\nCSRF token invalid")
+                        cl.close()
+                        continue
+
                     pitch = int(params.get("pitch", "880"))
                     volume = int(params.get("volume", "80"))
 
@@ -418,6 +485,15 @@ def run_web_server():
                     query_end = request.find(" ", query_start)
                     query_string = request[query_start:query_end]
                     params = parse_query_string(query_string)
+
+                    # Phase 3: CSRF 防護（Gemini 審查建議補強）
+                    if not verify_csrf_token(params):
+                        print("Error: CSRF token validation failed for new_profile")
+                        cl.send(b"HTTP/1.1 403 Forbidden\r\nContent-Type: text/html; charset=utf-8\r\n\r\n")
+                        cl.send(b"<h1>403 Forbidden</h1><p>CSRF token invalid.</p>")
+                        cl.close()
+                        continue
+
                     new_name = params.get("name", "")
 
                     if new_name:
@@ -469,6 +545,15 @@ def run_web_server():
                     query_end = request.find(" ", query_start)
                     query_string = request[query_start:query_end]
                     params = parse_query_string(query_string)
+
+                    # Phase 3: CSRF 防護
+                    if not verify_csrf_token(params):
+                        print("Error: CSRF token validation failed for delete_profile")
+                        cl.send(b"HTTP/1.1 403 Forbidden\r\nContent-Type: text/html; charset=utf-8\r\n\r\n")
+                        cl.send(b"<h1>403 Forbidden</h1><p>CSRF token invalid.</p>")
+                        cl.close()
+                        continue
+
                     profile_name = params.get("name", "")
 
                     try:
@@ -485,6 +570,22 @@ def run_web_server():
                 if "GET /factory_reset" in request:
                     last_activity_time = time.time()
                     print("WARNING: Factory reset requested!")
+
+                    # Phase 3: CSRF 防護 (factory reset 需要 token)
+                    # 解析 query string (如果有)
+                    params = {}
+                    if "?" in request:
+                        query_start = request.find("?") + 1
+                        query_end = request.find(" ", query_start)
+                        query_string = request[query_start:query_end]
+                        params = parse_query_string(query_string)
+
+                    if not verify_csrf_token(params):
+                        print("Error: CSRF token validation failed for factory_reset")
+                        cl.send(b"HTTP/1.1 403 Forbidden\r\nContent-Type: text/html; charset=utf-8\r\n\r\n")
+                        cl.send(b"<h1>403 Forbidden</h1><p>CSRF token invalid. Cannot perform factory reset.</p>")
+                        cl.close()
+                        continue
 
                     try:
                         # Perform factory reset
@@ -520,16 +621,33 @@ def run_web_server():
                     query_string = request[query_start:query_end]
                     params = parse_query_string(query_string)
 
+                    # Phase 3: CSRF 防護
+                    if not verify_csrf_token(params):
+                        print("Error: CSRF token validation failed for save_profile")
+                        cl.send(b"HTTP/1.1 403 Forbidden\r\nContent-Type: text/html; charset=utf-8\r\n\r\n")
+                        cl.send(b"<h1>403 Forbidden</h1><p>CSRF token invalid. Please reload the page.</p>")
+                        cl.close()
+                        continue
+
                     try:
                         original_name = params.get("original_profile_name", "")
                         new_name = params.get("profile_name", "")
+
+                        # 取得原始設定檔資料（用於保留密碼）
+                        original_profile = config_manager.get_profile(original_name)
+
+                        # Phase 2 安全改進：空密碼不覆蓋已儲存密碼
+                        wifi_password = params.get("password", "")
+                        if not wifi_password and original_profile:
+                            # 保留原密碼
+                            wifi_password = original_profile.get("wifi", {}).get("password", "")
 
                         # Build profile data
                         profile_data = {
                             "name": new_name,
                             "wifi": {
                                 "ssid": params.get("ssid", ""),
-                                "password": params.get("password", "")
+                                "password": wifi_password
                             },
                             "weather_location": params.get("location", "Taipei"),
                             "user": {
@@ -549,10 +667,19 @@ def run_web_server():
                         # Update profile
                         config_manager.update_profile(original_name, profile_data)
 
-                        # Update global settings
-                        config_manager.set_global("weather_api_key", params.get("api_key", ""))
+                        # Phase 2 安全改進：僅在有值時更新全局設定
+                        api_key_input = params.get("api_key", "")
+                        # 忽略遮罩值和空值
+                        if api_key_input and not api_key_input.startswith("已設定") and "..." not in api_key_input:
+                            config_manager.set_global("weather_api_key", api_key_input)
+
+                        # AP SSID 總是更新
                         config_manager.set_global("ap_mode.ssid", params.get("ap_mode_ssid", "Pi_Clock_AP"))
-                        config_manager.set_global("ap_mode.password", params.get("ap_mode_password", "12345678"))
+
+                        # AP 密碼僅在有輸入時更新
+                        ap_password_input = params.get("ap_mode_password", "")
+                        if ap_password_input:
+                            config_manager.set_global("ap_mode.password", ap_password_input)
 
                         # Set as active profile and update last connected
                         # This ensures the device will prioritize this profile on next restart

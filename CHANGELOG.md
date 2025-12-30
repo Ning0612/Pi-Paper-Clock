@@ -5,6 +5,12 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)，
 且本專案遵循 [Semantic Versioning](https://semver.org/spec/v2.0.0.html)。
 
+## [2.0.1] - 2025-12-31
+
+### 安全性修復 (Security)
+- **🔒 安全性強化**：針對系統安全性進行全面修復與強化，包含防止跨站腳本攻擊 (XSS)、跨站請求偽造 (CSRF) 及敏感資訊保護，提升系統整體的防護能力。
+
+
 ## [2.0.0] - 2025-12-31
 
 ### 重大變更 (Breaking Changes)

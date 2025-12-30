@@ -12,6 +12,8 @@ UPLOAD_IMAGES = True
 MPREMOTE_PORT = None
 ENABLE_CLEAN = True
 ENABLE_RECURSIVE_CLEAN = False  # 新增：是否遞迴清除所有檔案
+NO_CONFIG = False  # 新增：是否跳過 config.json
+
 
 # 用於停止讀取執行緒的事件
 stop_reader_event = threading.Event()
@@ -142,6 +144,8 @@ def collect_files():
 
     for root, dirs, files in os.walk(SOURCE_DIR):
         for file in files:
+            if NO_CONFIG and file == "config.json":
+                continue
             if any(file.endswith(ext) for ext in INCLUDE_EXTENSIONS):
                 full_path = os.path.join(root, file).replace("\\", "/")
                 rel_path = os.path.relpath(full_path, SOURCE_DIR).replace("\\", "/")
@@ -252,6 +256,8 @@ def clean_all_files():
                 
             else:
                 # 如果是檔案，直接刪除
+                if NO_CONFIG and item_name == "config.json":
+                    continue
                 current_command_text = f"刪除檔案: {full_path}"
                 print(f"\r{current_command_text.ljust(80)}", end="", flush=True)
                 success = run_command(base_cmd + ["fs", "rm", f":{full_path}"], display_output=False)
@@ -303,6 +309,8 @@ def clean_all_files():
     
     # 先刪除根目錄下的所有檔案
     for f in root_files:
+        if NO_CONFIG and f == "config.json":
+            continue
         current_command_text = f"刪除根目錄檔案: {f}"
         print(f"\r{current_command_text.ljust(80)}", end="", flush=True)
         
@@ -359,6 +367,8 @@ def clean_specific_files():
 
         # 檢查檔案副檔名
         if any(file_name.endswith(ext) for ext in INCLUDE_EXTENSIONS):
+            if NO_CONFIG and file_name == "config.json":
+                continue
             files_to_delete.append(file_name)
 
     if not files_to_delete:
@@ -441,6 +451,7 @@ def parse_args():
     parser.add_argument("--no-images", action="store_false", dest="upload_images", default=True, help="Do not upload image files.")
     parser.add_argument("--recursive-clean", action="store_true", dest="recursive_clean", default=False, help="遞迴清除裝置上的所有檔案 (包含目錄)")
     parser.add_argument("--no-clean", action="store_false", dest="enable_clean", default=True, help="跳過清除檔案步驟")
+    parser.add_argument("--no-config", action="store_true", dest="no_config", default=False, help="不要上傳也不要刪除 config.json")
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -449,6 +460,7 @@ if __name__ == "__main__":
     UPLOAD_IMAGES = args.upload_images
     ENABLE_RECURSIVE_CLEAN = args.recursive_clean
     ENABLE_CLEAN = args.enable_clean
+    NO_CONFIG = args.no_config
 
     print("--- Pico W 自動部署開始 ---")
 
