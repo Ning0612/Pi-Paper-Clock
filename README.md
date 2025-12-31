@@ -1,8 +1,13 @@
 # Pico Clock Weather Display - 基於 Pico W 與 E-Paper 的 IoT 時鐘
 
+[![MicroPython](https://img.shields.io/badge/MicroPython-1.22+-blue.svg)](https://micropython.org/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![Hardware](https://img.shields.io/badge/Hardware-Raspberry%20Pi%20Pico%20W-red.svg)](https://www.raspberrypi.com/products/raspberry-pi-pico-w/)
+[![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC%20BY--NC%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc/4.0/)
+
 本專案是一個基於 Raspberry Pi Pico W 和 Waveshare 2.9 吋電子紙顯示器的 IoT 智慧時鐘。它不僅能顯示時間，還能連接網路獲取天氣資訊、輪播自訂圖片，並具備光線感應與觸控功能。
 
-![Project Demo](DEMO.jpg)  
+![Project Demo](DEMO.jpg)
 
 ---
 
