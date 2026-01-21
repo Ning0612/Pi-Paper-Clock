@@ -15,6 +15,11 @@ class AppState:
         self.weather_forecast = None
         self.weather_forecast_last_updated = -1
         
+        # DHT22 local sensor data
+        self.current_temperature = None
+        self.current_humidity = None
+        self.sensor_last_updated_ms = -1
+        
         self.is_first_run = True
         self.partial_update = False
         self.image_name_list = []

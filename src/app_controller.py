@@ -73,6 +73,7 @@ class AppController:
                 self.handle_touch(touch_state)
                 self._perform_chime(t)
                 self._update_weather()
+                self._update_sensor_data()
                 self._update_display(t)
 
                 self.state.is_first_run = False
@@ -106,7 +107,15 @@ class AppController:
         if config_manager.get("user.birthday") == current_date:
             update_page_birthday(self.state.partial_update, t)
         elif self.state.current_weather and self.state.weather_forecast:
-            update_page_weather(self.state.current_weather, self.state.weather_forecast, self.state.display_image_path, self.state.partial_update, t)
+            update_page_weather(
+                self.state.current_weather, 
+                self.state.weather_forecast, 
+                self.state.display_image_path, 
+                self.state.partial_update, 
+                t,
+                dht22_temp=self.state.current_temperature,
+                dht22_humidity=self.state.current_humidity
+            )
         else:
             update_page_time_image(self.state.display_image_path, self.state.partial_update, t)
 
@@ -148,3 +157,22 @@ class AppController:
         # Clear weather forecast data if older than 4 hours
         if time.ticks_diff(time.ticks_ms(), self.state.weather_forecast_last_updated) > 4 * 60 * 60 * 1000 :
             self.state.weather_forecast = None
+    
+    def _update_sensor_data(self):
+        """Reads DHT22 sensor data and updates application state.
+        
+        Hardware manager handles throttling internally, so safe to call frequently.
+        Only updates state on successful read; preserves old values on failure.
+        """
+        sensor_data = self.hw.get_temperature_humidity()
+        
+        if sensor_data is not None:
+            # Successful read: update state
+            temperature, humidity = sensor_data
+            self.state.current_temperature = temperature
+            self.state.current_humidity = humidity
+            # Note: timestamp is managed by hardware layer's actual read time
+            print(f"DHT22: {temperature}C, {humidity}%")
+        else:
+            # Failed read: preserve old values (None on first failure)
+            print("DHT22: Read failed, keeping previous values")

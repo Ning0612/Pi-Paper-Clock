@@ -1,5 +1,6 @@
 # hardware_manager.py
 import time
+import dht
 from machine import ADC, Pin
 from epaper import ICNT86, ICNT_Development, get_touch_state
 
@@ -17,6 +18,13 @@ class HardwareManager:
         self.icnt_dev = ICNT_Development()
         self.icnt_old = ICNT_Development()
         self.tp.ICNT_Init()
+        
+        # DHT22 temperature/humidity sensor on GP19
+        self.dht_sensor = dht.DHT22(Pin(19))
+        # Initialize to allow first read immediately (2001ms in the past)
+        self.dht_last_read_ms = time.ticks_add(time.ticks_ms(), -2001)
+        self.dht_last_temperature = None
+        self.dht_last_humidity = None
         
         # Button long press detection
         self.button_press_timestamps = {}
@@ -80,3 +88,45 @@ class HardwareManager:
                     del self.button_press_timestamps[i]
         
         return False
+    
+    def get_temperature_humidity(self):
+        """Reads temperature and humidity from DHT22 sensor with built-in throttling.
+        
+        Returns:
+            tuple: (temperature_celsius, humidity_percent) on success, None on failure.
+                   Returns cached values if called within 2 seconds of last read.
+        """
+        current_time_ms = time.ticks_ms()
+        
+        # Throttling: DHT22 requires minimum 2 seconds between reads
+        if time.ticks_diff(current_time_ms, self.dht_last_read_ms) < 2000:
+            # Return cached values if available
+            if self.dht_last_temperature is not None and self.dht_last_humidity is not None:
+                return (self.dht_last_temperature, self.dht_last_humidity)
+            return None
+        
+        try:
+            # Read sensor (measure() must be called before reading values)
+            self.dht_sensor.measure()
+            temperature = self.dht_sensor.temperature()
+            humidity = self.dht_sensor.humidity()
+            
+            # Update throttle timestamp regardless of value validity
+            self.dht_last_read_ms = current_time_ms
+            
+            # Validate sensor values before caching
+            if temperature is not None and humidity is not None:
+                # Cache successful read
+                self.dht_last_temperature = temperature
+                self.dht_last_humidity = humidity
+                return (temperature, humidity)
+            else:
+                print("DHT22: Invalid sensor values (None)")
+                return None
+            
+        except (OSError, ValueError) as e:
+            print(f"DHT22 sensor read error: {e}")
+            # CRITICAL: Update timestamp even on error to prevent repeated failed reads
+            self.dht_last_read_ms = current_time_ms
+            # Return None on error, controller will preserve old state values
+            return None
