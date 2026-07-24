@@ -1,6 +1,8 @@
 import importlib.util
 import json
+import os
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -20,6 +22,7 @@ class DiscordNotifierTests(unittest.TestCase):
         config_module = types.ModuleType("config_manager")
         config_module.config_manager = types.SimpleNamespace(
             get_global=lambda _key, default="": default,
+            get=lambda _key, default=None: default,
         )
         sys.modules["config_manager"] = config_module
 
@@ -35,6 +38,61 @@ class DiscordNotifierTests(unittest.TestCase):
                 sys.modules.pop(name, None)
             else:
                 sys.modules[name] = module
+
+    def test_delivery_blocked_distinguishes_config_from_link_failures(self):
+        config = sys.modules["config_manager"].config_manager
+        original_get_global = config.get_global
+        original_wlan = sys.modules["network"].WLAN
+        try:
+            config.get_global = lambda _key, default="": ""
+            self.assertEqual(self.module.delivery_blocked(), "nowebhook")
+
+            config.get_global = lambda _key, default="": "https://discord.com/api/webhooks/x/y"
+            sys.modules["network"].WLAN = lambda _i: types.SimpleNamespace(
+                isconnected=lambda: False
+            )
+            self.assertEqual(self.module.delivery_blocked(), "offline")
+
+            sys.modules["network"].WLAN = lambda _i: types.SimpleNamespace(
+                isconnected=lambda: True
+            )
+            self.assertEqual(self.module.delivery_blocked(), "")
+        finally:
+            config.get_global = original_get_global
+            sys.modules["network"].WLAN = original_wlan
+
+    def test_headroom_probe_reports_available_contiguous_block(self):
+        self.assertTrue(self.module.has_tls_headroom(1024))
+        self.assertEqual(self.module.largest_contiguous_block(4096), 4096)
+
+    def test_diag_record_appends_and_trims_without_unbounded_growth(self):
+        original_file = self.module.DIAG_FILE
+        original_max = self.module.MAX_DIAG_BYTES
+        with tempfile.TemporaryDirectory() as directory:
+            self.module.DIAG_FILE = str(Path(directory) / "diag.log")
+            self.module.MAX_DIAG_BYTES = 256
+            try:
+                for index in range(120):
+                    self.module.diag_record("fail", "n={}".format(index))
+
+                size = os.stat(self.module.DIAG_FILE).st_size
+                self.assertLessEqual(size, self.module.MAX_DIAG_BYTES * 2)
+                with open(self.module.DIAG_FILE) as handle:
+                    lines = [line for line in handle.read().split("\n") if line]
+                # Trimming drops the oldest half; the newest entry always survives.
+                self.assertTrue(lines[-1].endswith("n=119"))
+                self.assertIn("fail", lines[-1])
+            finally:
+                self.module.DIAG_FILE = original_file
+                self.module.MAX_DIAG_BYTES = original_max
+
+    def test_diag_record_never_raises_when_path_is_unwritable(self):
+        original_file = self.module.DIAG_FILE
+        self.module.DIAG_FILE = str(Path("no-such-dir") / "nested" / "diag.log")
+        try:
+            self.module.diag_record("fail", "unwritable")
+        finally:
+            self.module.DIAG_FILE = original_file
 
     def test_json_payload_escapes_controls_and_keeps_utf8_emoji(self):
         message = 'quote " slash \\ newline\n tab\t 中文🟦'

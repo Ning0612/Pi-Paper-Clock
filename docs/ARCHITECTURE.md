@@ -25,6 +25,11 @@ main.py
 - Discord JSON payload 以單一 `bytearray` 組裝，避免字串串接時留下額外完整 payload copy；Discord socket 在建立與 TLS 前會記錄 heap free/allocated telemetry。
 - 啟動通知與 pending Discord queue 在 `main.py` 的低依賴啟動階段先執行，避開 controller/weather 後續模組 import 與 display/hardware 工作物件建立造成的 heap 碎片；第一次失敗不阻塞主程式，controller 會在 45 秒後、每 30 秒重試，pending queue 則保留到下一次可用窗口（`presence_pending.log`／`presence_session_pending.log` 另有 7 天保留上限，超過天數的通知會被裁切捨棄，不會無限期等待重試，見下方「Flash 儲存邊界」）。
 - Discord `ENOMEM` 會回傳可重試結果；presence queue 在記憶體壓力後暫停一個 flush interval，之後自動恢復嘗試，不丟棄 pending session/summary。
+- **TLS 需要的是連續區塊，不是可用總量**。實機量測（MicroPython 1.24.1）顯示 `ssl.wrap_socket` 在最大連續區塊 17,920 B 時直接 `OSError [Errno 12] ENOMEM`，23,120 B 時成功；而裝置運行時 `gc.mem_free()` 約 57 KB、最大連續區塊卻只有約 17.9 KB。`release_display_workspace()` 是目前唯一有效的手段（約 +5.2 KiB）；實測清除天氣快取與重複 `gc.collect()` 對最大連續區塊完全無效。
+- `flush_discord()` 因此在釋放 display workspace 之後、送信之前執行 pre-flight 檢查（`has_tls_headroom()`，門檻 `TLS_MIN_CONTIGUOUS_BYTES` = 20 KiB）。不足時跳過本次嘗試並累計失敗計數，避免把約 3 秒耗在必定失敗的 handshake 上。失敗原因與當下最大連續區塊寫入 `discord_diag.log`（第 1 次與其後每 10 次），失敗診斷因此能在斷電後保留。
+- **記憶體探針之前必須先問「這則訊息本來就送得出去嗎」**：`delivery_blocked()` 會先判斷 webhook 是否設定、STA 是否連線，回傳 `nowebhook`／`offline`／`""`。順序反過來的話，「沒設定 webhook」或「斷網」會被記成記憶體不足，累積後觸發一個根本幫不上忙的重開機。三個 `send_*` 函式共用同一份判斷，避免兩處條件漂移。
+- 碎片化一旦讓連續區塊長期不足，**只有重開機能取回連續 heap**。`app_controller` 在**記憶體類失敗**（`lowmem`／`enomem`，由 `presence.discord_mem_failures` 單獨計數）連續達 30 次、仍有 pending、且開機滿 10 分鐘時執行 `machine.reset()`。HTTP 錯誤或斷網會把該計數歸零：重開機修不好一個被刪除的 webhook，只會變成每 2 小時重啟一次。
+- 自動重啟的三道保險：pending 未能寫入 flash（`pending_persist_failed`）時放棄重啟，否則會遺失只存在於 RAM 的通知；冷卻時間戳寫入失敗時放棄重啟並封鎖本次開機（fail-safe，不重啟優於 boot loop）；`discord_autoreset.log` 於執行期即時評估，冷卻可在運行中自然到期。「開機滿 10 分鐘」以 latch 記錄而非每次重算——`ticks_ms()` 為 30-bit、`ticks_diff()` 僅在約 ±6.2 天內有效，而這個故障正好出現在約 12 天的連續運行之後。
 - DHT22 使用 2500 ms 最小讀取間隔；讀取失敗改用 10 秒 backoff，保留上一筆快取值，避免感測器錯誤反覆消耗 heap 與刷 serial log。
 - 天氣預報使用 256-byte 固定串流 buffer 與 `readinto()`，逐筆解析 forecast entry；response、entry 暫存物件在處理後釋放並回收，避免一次載入完整 JSON 文件。
 - 天氣 request 前、response 取得後與 forecast parse 後會記錄 heap telemetry；forecast 優先直接解析 bytes，只有 MicroPython 相容性需要時才 fallback 到 decode。Presence API 的記憶體讀取介面只保留最近 128 筆事件與 366 筆 daily lines，且單行最多讀取 256 字元；完整串流 API 仍逐行送出。
@@ -43,7 +48,7 @@ main.py
   └─ DHT22 依時間節流，失敗使用 backoff 與快取
 ```
 
-這些策略的目標是降低「單次配置峰值」與重複配置頻率，而不是宣稱裝置 heap 永遠不會耗盡。現場診斷應同時查看 serial 的 `ENOMEM`、`Memory before/after ...` telemetry、DHT22 錯誤與 `/api/v1/device` 的 `heap_free`。
+這些策略的目標是降低「單次配置峰值」與重複配置頻率，而不是宣稱裝置 heap 永遠不會耗盡。現場診斷應同時查看 serial 的 `ENOMEM`、`Memory before/after ...` telemetry、DHT22 錯誤與 `/api/v1/device` 的 `heap_free`。**Discord 送不出去時優先查裝置上的 `discord_diag.log`**：`lowmem` 事件附帶當下的最大連續區塊，可直接判斷是碎片化還是 webhook 本身的問題（後者記錄為 `http<狀態碼>`）。注意 `heap_free` 充足並不代表 TLS 可用——關鍵指標是最大連續區塊。
 
 ## Flash 儲存邊界
 
@@ -52,6 +57,7 @@ main.py
 - 兩個模組都採「事件/樣本檔＋每日彙總檔」的雙檔設計，並在每日換日時以 `_trim_by_date` 依日期視窗裁切——檔案大小會在保留視窗內收斂到穩定值，不會隨時間無限增長。
 - `env_events.log`（15 分鐘取樣、7 天保留）穩態約 17 KiB；`env_daily.log`（每日彙總、366 天保留）穩態約 15 KiB；新增的 `environment.bin` WebUI 資產約 6.7 KiB（實測，`tools/build_html.py` 輸出）。三者合計約 40 KiB 是這次新增功能的穩態 flash 佔用。
 - 裁切/換日時的 `.tmp`/`.bak` 交易寫入（`_commit_tmp`）會暫時需要被重寫檔案的一整份額外空間；`env_events.log` 裁切瞬間約需額外 17 KiB。
+- `discord_diag.log` 上限 6 KiB，超過時串流捨棄較舊的一半（同樣使用 `.tmp` 交易寫入，瞬間額外需求不超過檔案本身）；`discord_autoreset.log` 只存一個 epoch 時間戳，量級可忽略。
 - **實測建議**：完成部署後應以裝置 REPL 執行 `os.statvfs('/')` 或呼叫 `GET /api/v1/device` 的 `fs_free` 欄位覆核實際剩餘空間，不要只依賴這裡的估算值。7 天保留的原始/事件 log（`env_events.log`、`presence_events.log`）約一個月內就會穩定在保留視窗內的穩態大小；366 天保留的每日彙總 log（`env_daily.log`、`presence_daily.log`）要接近一整年才會長到穩態上限，短期量測看到的每日彙總檔案會比長期穩態小很多，不能用一個月的量測值直接外推。若空間明顯吃緊，`env_manager.DAILY_RETENTION_DAYS`（預設 366，比照 `presence_manager.DAILY_RETENTION_DAYS`）可調降以換取空間。
 - **`.py` 原始碼是目前最大宗的 flash 佔用來源**：一台已部署 presence／env 功能且圖片庫有內容的裝置，18 個 `.py` 檔案合計約 226 KB，佔裝置總佔用（307 KB）的 74%，遠超過圖片資產（~50KB）與 Web UI `.bin` 資產（~38KB）。`tools/pico_deploy/upload_cli.py --mpy` 可在部署前用 `mpy-cross` 把 `.py` 預編譯成 `.mpy` bytecode（`epaper.py`／`main.py`／`config.json` 除外，理由見 `CLAUDE.md`「部署至裝置」一節），是目前最有效的省空間手段。**實測**（2026-07-22，裝置 MicroPython 1.24.1）：18 個原始碼檔案從約 226 KB 壓到約 101 KB，裝置剩餘 flash 從 88.0 KiB 提升到 204.0 KiB（多出 116 KiB），比社群估計的 30–50% bytecode 縮減比例更好。**裝置剩餘空間吃緊時建議部署加上 `--mpy`**；這仍是 opt-in 選項而非預設行為——目前沒有部署前韌體版本檢查機制，`mpy-cross` 版號與裝置實際韌體版本漂移會讓 `.mpy` 模組 import 失敗，加上回滾（切回純 `.py`）流程尚未完整驗證，暫不建議設為預設。
 

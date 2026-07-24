@@ -7,6 +7,26 @@
 
 ## [Unreleased]
 
+## [2.6.0] - 2026-07-25
+
+本版本修復 Discord 通知在裝置長時間運行後永久堵塞的問題，並將專案顯示名稱統一為 Pico Paper Clock。
+
+### Fixed
+
+- 修正 Discord 通知在裝置連續運行多日後永久送不出去、只有重開機才能恢復的問題。根因為 heap 碎片化：TLS handshake 需要一塊約 18–23 KiB 的**連續**記憶體，而裝置運行時 `gc.mem_free()` 雖有約 57 KiB，最大連續區塊卻僅約 17.9 KiB。實機量測顯示最大連續區塊為 17,920 B 時 `ssl.wrap_socket` 直接拋出 `OSError [Errno 12] ENOMEM`，23,120 B 時才成功；既有的 `release_display_workspace()` 僅能多騰出約 5.2 KiB，安全邊際極薄。舊版 `flush_discord()` 在 ENOMEM 後只會每 60 秒無限重試，沒有任何逃生路徑。
+- 修正 `send_presence_summary()` 丟棄 Discord HTTP 錯誤回應內容的問題，失敗時無法得知實際原因；現與其他兩個送信函式一致會記錄回應內容。
+
+### Added
+
+- `discord_notifier.py` 新增 TLS 記憶體探針 `has_tls_headroom()` 與 `largest_contiguous_block()`。`presence_manager.flush_discord()` 在釋放顯示工作區之後、送信之前執行 pre-flight 檢查，連續記憶體低於 `TLS_MIN_CONTIGUOUS_BYTES`（20 KiB）時直接跳過本次嘗試，避免耗費約 3 秒在必定失敗的 TLS handshake 上。記憶體探針之前會先以新增的 `delivery_blocked()` 判斷 webhook 是否設定、網路是否連線，確保「未設定 webhook」或「斷網」不會被誤記為記憶體不足而觸發幫不上忙的重開機；三個送信函式共用同一份判斷。
+- 新增持久化診斷日誌 `discord_diag.log`（上限 6 KiB，超過時以串流方式捨棄較舊的一半，並比照既有 `_commit_tmp` 以 `.bak` 交換，斷電時必留一份可讀副本）。記錄送信失敗原因、當下可用記憶體與最大連續區塊，讓失敗不再只 `print` 到 UART 而在斷電後遺失。記錄採節流策略：第 1 次失敗與其後每 10 次各記一筆。失敗原因分為 `lowmem`／`enomem`（記憶體）與 `http<狀態碼>`／`offline`／`nowebhook`／`badformat`／`baddata`（非記憶體），可直接判讀故障類型。
+- 新增保底自動重啟：**僅限記憶體類失敗**（pre-flight `lowmem` 與送信 `ENOMEM`）連續達 30 次、仍有 pending 通知、且開機已滿 10 分鐘時執行 `machine.reset()`，藉由重開機取回連續 heap。HTTP 錯誤、斷網、未設定 webhook 等非記憶體失敗會將此計數歸零，不會觸發重啟——重開機無法修好一個被刪除的 webhook。多重防護：pending 通知未能寫入 flash 時放棄重啟（避免遺失）；冷卻時間戳無法持久化時同樣放棄重啟（fail-safe，避免退化成 boot loop）；`discord_autoreset.log` 的時間戳在執行期即時評估，2 小時內不重複自動重啟。開機滿 10 分鐘的判定採用 latch，因為 MicroPython 的 `ticks_diff()` 僅在約 ±6.2 天內有效，而本次故障正好出現在約 12 天的運行之後。
+
+### Changed
+
+- 專案顯示名稱統一為 Pico Paper Clock，移除文件、Web UI 頁面、桌面工具與 Discord 上線通知中殘留的舊名 Pi Paper Clock。
+- `GET /api/v1/device` 回傳的裝置識別字串由 `pi-paper-clock` 改為 `pico-paper-clock`。桌面圖片工具同時接受新舊兩種識別字串，因此尚未更新韌體的裝置仍可正常連線。
+
 ## [2.5.0] - 2026-07-22
 
 ### Added

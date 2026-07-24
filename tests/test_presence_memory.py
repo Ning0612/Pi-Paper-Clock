@@ -83,6 +83,286 @@ class PresenceMemoryTests(unittest.TestCase):
             self.module.PENDING_FILE = original_pending
             self.module.PENDING_SESSION_FILE = original_session_pending
 
+    def test_low_contiguous_heap_skips_the_send_and_counts_a_failure(self):
+        """Below the TLS headroom the attempt is skipped, not burned on ENOMEM."""
+        original_probe = self.module._tls_headroom_ok
+        original_diag = self.module._diag
+        original_largest = self.module._largest_block
+        try:
+            self.module._tls_headroom_ok = lambda: False
+            self.module._largest_block = lambda: 14176
+            recorded = []
+            self.module._diag = lambda event, detail="": recorded.append((event, detail))
+
+            attempted = []
+            manager = self.module.PresenceManager(
+                discord_sender=lambda summary: attempted.append(summary) or True,
+                session_sender=lambda *values: attempted.append(values) or True,
+            )
+            manager.pending_summary = "20260725,1,1,1,1"
+
+            self.assertFalse(manager.flush_discord())
+            self.assertEqual(attempted, [])
+            self.assertEqual(manager.discord_failures, 1)
+            self.assertEqual(recorded[0][0], "fail")
+            self.assertIn("lowmem", recorded[0][1])
+            self.assertIn("largest=14176", recorded[0][1])
+        finally:
+            self.module._tls_headroom_ok = original_probe
+            self.module._diag = original_diag
+            self.module._largest_block = original_largest
+
+    def test_repeated_failures_accumulate_but_logging_is_throttled(self):
+        original_probe = self.module._tls_headroom_ok
+        original_diag = self.module._diag
+        original_largest = self.module._largest_block
+        try:
+            self.module._tls_headroom_ok = lambda: False
+            self.module._largest_block = lambda: 0
+            recorded = []
+            self.module._diag = lambda event, detail="": recorded.append((event, detail))
+
+            manager = self.module.PresenceManager(
+                discord_sender=lambda _summary: True,
+                session_sender=lambda *_values: True,
+            )
+            manager.pending_summary = "20260725,1,1,1,1"
+
+            for _ in range(30):
+                # Re-arm the 60 s throttle so each loop is a real attempt.
+                manager.last_retry_ms = time.ticks_add(time.ticks_ms(), -600001)
+                manager.flush_discord()
+
+            self.assertEqual(manager.discord_failures, 30)
+            # First failure, then every tenth: 1, 10, 20, 30.
+            self.assertEqual(len(recorded), 4)
+        finally:
+            self.module._tls_headroom_ok = original_probe
+            self.module._diag = original_diag
+            self.module._largest_block = original_largest
+
+    def test_successful_flush_clears_the_stall_counter(self):
+        original_paths = {
+            name: getattr(self.module, name)
+            for name in ("PENDING_FILE", "PENDING_SESSION_FILE")
+        }
+        original_diag = self.module._diag
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                self.module.PENDING_FILE = str(Path(directory) / "summary.log")
+                self.module.PENDING_SESSION_FILE = str(Path(directory) / "session.log")
+                recorded = []
+                self.module._diag = lambda event, detail="": recorded.append((event, detail))
+
+                manager = self.module.PresenceManager(
+                    discord_sender=lambda _summary: True,
+                    session_sender=lambda *_values: True,
+                )
+                manager.pending_summary = "20260725,1,1,1,1"
+                manager.discord_failures = 17
+
+                self.assertTrue(manager.flush_discord())
+                self.assertEqual(manager.discord_failures, 0)
+                self.assertEqual(recorded[-1][0], "recovered")
+                self.assertIn("after=17", recorded[-1][1])
+        finally:
+            for name, value in original_paths.items():
+                setattr(self.module, name, value)
+            self.module._diag = original_diag
+
+    def test_only_memory_failures_feed_the_reboot_counter(self):
+        """HTTP/network failures must not accumulate toward an auto-reset."""
+        original_probe = self.module._tls_headroom_ok
+        original_diag = self.module._diag
+        original_reason = self.module._last_failure_reason
+        try:
+            self.module._tls_headroom_ok = lambda: True
+            self.module._diag = lambda event, detail="": None
+
+            manager = self.module.PresenceManager(
+                discord_sender=lambda _summary: False,
+                session_sender=lambda *_values: False,
+            )
+            manager.pending_summary = "20260725,1,1,1,1"
+
+            self.module._last_failure_reason = lambda: "http404"
+            for _ in range(5):
+                manager.last_retry_ms = time.ticks_add(time.ticks_ms(), -600001)
+                manager.flush_discord()
+            self.assertEqual(manager.discord_failures, 5)
+            self.assertEqual(manager.discord_mem_failures, 0)
+
+            self.module._last_failure_reason = lambda: "enomem"
+            for _ in range(3):
+                manager.last_retry_ms = time.ticks_add(time.ticks_ms(), -600001)
+                manager.flush_discord()
+            self.assertEqual(manager.discord_mem_failures, 3)
+
+            # A non-memory failure breaks the memory streak.
+            self.module._last_failure_reason = lambda: "offline"
+            manager.last_retry_ms = time.ticks_add(time.ticks_ms(), -600001)
+            manager.flush_discord()
+            self.assertEqual(manager.discord_mem_failures, 0)
+        finally:
+            self.module._tls_headroom_ok = original_probe
+            self.module._diag = original_diag
+            self.module._last_failure_reason = original_reason
+
+    def test_memory_failure_on_either_pending_counts_for_recovery(self):
+        """With two pendings failing differently, memory starvation must still count."""
+        original_probe = self.module._tls_headroom_ok
+        original_diag = self.module._diag
+        original_reason = self.module._last_failure_reason
+        original_paths = {
+            name: getattr(self.module, name)
+            for name in ("PENDING_FILE", "PENDING_SESSION_FILE")
+        }
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                self.module.PENDING_FILE = str(Path(directory) / "summary.log")
+                self.module.PENDING_SESSION_FILE = str(Path(directory) / "session.log")
+                self.module._tls_headroom_ok = lambda: True
+                self.module._diag = lambda event, detail="": None
+
+                manager = self.module.PresenceManager(
+                    discord_sender=lambda _summary: False,
+                    session_sender=lambda *_values: False,
+                )
+                manager.pending_summary = "20260725,1,1,1,1"
+                manager.pending_session = "20260725,090000,20260725,090100,60"
+
+                # First attempt reports ENOMEM, the second reports HTTP 404.
+                reasons = iter(("enomem", "http404"))
+                self.module._last_failure_reason = lambda: next(reasons, "http404")
+
+                manager.last_retry_ms = time.ticks_add(time.ticks_ms(), -600001)
+                manager.flush_discord()
+                self.assertEqual(manager.discord_mem_failures, 1)
+        finally:
+            for name, value in original_paths.items():
+                setattr(self.module, name, value)
+            self.module._tls_headroom_ok = original_probe
+            self.module._diag = original_diag
+            self.module._last_failure_reason = original_reason
+
+    def test_persist_failure_flag_is_sticky_across_successful_flushes(self):
+        """An emptied queue is not proof of health - it may be the loss itself."""
+        original_paths = {
+            name: getattr(self.module, name)
+            for name in ("PENDING_FILE", "PENDING_SESSION_FILE")
+        }
+        original_probe = self.module._tls_headroom_ok
+        original_diag = self.module._diag
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                self.module.PENDING_FILE = str(Path(directory) / "summary.log")
+                self.module.PENDING_SESSION_FILE = str(Path(directory) / "session.log")
+                self.module._tls_headroom_ok = lambda: True
+                self.module._diag = lambda event, detail="": None
+
+                manager = self.module.PresenceManager(
+                    discord_sender=lambda _summary: True,
+                    session_sender=lambda *_values: True,
+                )
+                manager.pending_persist_failed = True
+                manager.pending_summary = "20260725,1,1,1,1"
+
+                manager.last_retry_ms = time.ticks_add(time.ticks_ms(), -600001)
+                self.assertTrue(manager.flush_discord())
+                self.assertIsNone(manager.pending_summary)
+                self.assertTrue(manager.pending_persist_failed)
+        finally:
+            for name, value in original_paths.items():
+                setattr(self.module, name, value)
+            self.module._tls_headroom_ok = original_probe
+            self.module._diag = original_diag
+
+    def test_pending_persist_failure_is_recorded(self):
+        """A queue write that never reached flash must be visible to the caller."""
+        original_paths = {
+            name: getattr(self.module, name)
+            for name in ("PENDING_FILE", "PENDING_SESSION_FILE")
+        }
+        try:
+            self.module.PENDING_FILE = str(Path("no-such-dir") / "nested" / "summary.log")
+            self.module.PENDING_SESSION_FILE = str(Path("no-such-dir") / "nested" / "session.log")
+            manager = self.module.PresenceManager(
+                discord_sender=lambda _summary: True,
+                session_sender=lambda *_values: True,
+            )
+            self.assertFalse(manager.pending_persist_failed)
+            manager._queue_summary("20260725,1,1,1,1")
+            self.assertTrue(manager.pending_persist_failed)
+            # The notification is still held in RAM so it can still be delivered.
+            self.assertEqual(manager.pending_summary, "20260725,1,1,1,1")
+        finally:
+            for name, value in original_paths.items():
+                setattr(self.module, name, value)
+
+    def test_missing_webhook_is_not_misfiled_as_memory_starvation(self):
+        """A reboot cannot conjure up a webhook, so this must not drive one."""
+        original_probe = self.module._tls_headroom_ok
+        original_blocked = self.module._delivery_blocked
+        original_diag = self.module._diag
+        try:
+            # Memory is starved *and* delivery is impossible for another reason.
+            self.module._tls_headroom_ok = lambda: False
+            self.module._delivery_blocked = lambda: "nowebhook"
+            recorded = []
+            self.module._diag = lambda event, detail="": recorded.append((event, detail))
+
+            attempted = []
+            manager = self.module.PresenceManager(
+                discord_sender=lambda summary: attempted.append(summary) or True,
+                session_sender=lambda *values: attempted.append(values) or True,
+            )
+            manager.pending_summary = "20260725,1,1,1,1"
+
+            for _ in range(5):
+                manager.last_retry_ms = time.ticks_add(time.ticks_ms(), -600001)
+                self.assertFalse(manager.flush_discord())
+
+            self.assertEqual(attempted, [])
+            self.assertEqual(manager.discord_failures, 5)
+            self.assertEqual(manager.discord_mem_failures, 0)
+            self.assertIn("nowebhook", recorded[0][1])
+        finally:
+            self.module._tls_headroom_ok = original_probe
+            self.module._delivery_blocked = original_blocked
+            self.module._diag = original_diag
+
+    def test_offline_is_not_misfiled_as_memory_starvation(self):
+        original_probe = self.module._tls_headroom_ok
+        original_blocked = self.module._delivery_blocked
+        original_diag = self.module._diag
+        try:
+            self.module._tls_headroom_ok = lambda: False
+            self.module._delivery_blocked = lambda: "offline"
+            self.module._diag = lambda event, detail="": None
+
+            manager = self.module.PresenceManager(
+                discord_sender=lambda _summary: True,
+                session_sender=lambda *_values: True,
+            )
+            manager.pending_summary = "20260725,1,1,1,1"
+            manager.discord_mem_failures = 7
+
+            manager.last_retry_ms = time.ticks_add(time.ticks_ms(), -600001)
+            self.assertFalse(manager.flush_discord())
+            self.assertEqual(manager.discord_mem_failures, 0)
+        finally:
+            self.module._tls_headroom_ok = original_probe
+            self.module._delivery_blocked = original_blocked
+            self.module._diag = original_diag
+
+    def test_delivery_precondition_defaults_to_attempting_the_send(self):
+        """If the probe cannot run it must never be the reason nothing is sent."""
+        self.assertEqual(self.module._delivery_blocked(), "")
+
+    def test_headroom_probe_defaults_to_allowing_the_send(self):
+        """A probe that cannot run must never be the reason a message is blocked."""
+        self.assertTrue(self.module._tls_headroom_ok())
+
     def test_startup_flush_drains_pending_session_and_summary_files(self):
         original_pending = self.module.PENDING_FILE
         original_session_pending = self.module.PENDING_SESSION_FILE
