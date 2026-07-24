@@ -1,13 +1,151 @@
 import gc
 import network
+import os
 import socket
 import ssl
+import time
 
 from config_manager import config_manager
 
 FULL_DAY_SECONDS = 24 * 60 * 60
 PRESENCE_BAR_WIDTH = 10
 DISCORD_GC_THRESHOLD = 4096
+
+# The TLS handshake needs one large *contiguous* block, not just free bytes.
+# Measured on device (MicroPython 1.24.1): 17920 B fails with ENOMEM while
+# 23120 B succeeds, so refuse to even try below a conservative 20 KiB.
+TLS_MIN_CONTIGUOUS_BYTES = 20 * 1024
+_PROBE_STEP = 1024
+
+DIAG_FILE = "discord_diag.log"
+MAX_DIAG_BYTES = 6 * 1024
+
+_last_failure = ""
+
+
+def last_failure():
+    """Returns the most recent send failure reason, for diagnostics."""
+    return _last_failure
+
+
+def _note_failure(reason):
+    global _last_failure
+    _last_failure = reason
+
+
+def delivery_blocked():
+    """Returns why delivery cannot work at all right now, or "" if it can be tried.
+
+    Checked before the heap probe so a missing webhook or a dead link is never
+    misfiled as memory starvation -- rebooting cannot fix either of those.
+    """
+    if not config_manager.get_global("discord_webhook_url", ""):
+        return "nowebhook"
+    try:
+        if not network.WLAN(network.STA_IF).isconnected():
+            return "offline"
+    except Exception:
+        pass
+    return ""
+
+
+def has_tls_headroom(min_bytes=TLS_MIN_CONTIGUOUS_BYTES):
+    """Reports whether a TLS-sized contiguous block can still be allocated."""
+    gc.collect()
+    try:
+        probe = bytearray(min_bytes)
+    except MemoryError:
+        return False
+    del probe
+    gc.collect()
+    return True
+
+
+def largest_contiguous_block(ceiling=TLS_MIN_CONTIGUOUS_BYTES + 8192):
+    """Returns the largest allocatable block, probed downwards in 1 KiB steps.
+
+    Only called on the failure path: the probe itself costs allocations.
+    """
+    gc.collect()
+    size = ceiling
+    while size > 0:
+        try:
+            probe = bytearray(size)
+        except MemoryError:
+            size -= _PROBE_STEP
+            continue
+        del probe
+        gc.collect()
+        return size
+    return 0
+
+
+def _diag_timestamp():
+    try:
+        offset = config_manager.get("user.timezone_offset", 8) * 3600
+        t = time.localtime(time.time() + offset)
+        return "{:04d}{:02d}{:02d},{:02d}{:02d}{:02d}".format(
+            t[0], t[1], t[2], t[3], t[4], t[5]
+        )
+    except Exception:
+        return "00000000,000000"
+
+
+def _trim_diag():
+    """Drops the oldest half of the log by streaming, never loading it whole."""
+    try:
+        if os.stat(DIAG_FILE)[6] <= MAX_DIAG_BYTES:
+            return
+    except OSError:
+        return
+    total = 0
+    try:
+        with open(DIAG_FILE) as f:
+            for _ in f:
+                total += 1
+    except OSError:
+        return
+    skip = total // 2
+    tmp_path = DIAG_FILE + ".tmp"
+    try:
+        with open(DIAG_FILE) as src:
+            with open(tmp_path, "w") as dst:
+                index = 0
+                for line in src:
+                    index += 1
+                    if index > skip:
+                        dst.write(line)
+        # Swap via .bak so a power loss mid-trim always leaves one readable copy.
+        backup_path = DIAG_FILE + ".bak"
+        try:
+            os.remove(backup_path)
+        except OSError:
+            pass
+        os.rename(DIAG_FILE, backup_path)
+        os.rename(tmp_path, DIAG_FILE)
+        try:
+            os.remove(backup_path)
+        except OSError:
+            pass
+    except OSError:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+
+def diag_record(event, detail=""):
+    """Appends one diagnostic line so failures survive a power cycle."""
+    try:
+        mem_free = getattr(gc, "mem_free", None)
+        free = mem_free() if callable(mem_free) else -1
+        line = "{},{},{},{}".format(_diag_timestamp(), event, free, detail)
+        with open(DIAG_FILE, "a") as f:
+            f.write(line)
+            f.write("\n")
+        _trim_diag()
+    except Exception:
+        pass
 
 
 def _log_heap(label):
@@ -254,34 +392,37 @@ def _presence_session_message(start_date, start_time, end_date, end_time, durati
 
 def send_lan_ip(ip_address):
     """Sends the LAN configuration URL to Discord when a webhook is configured."""
+    blocked = delivery_blocked()
+    if blocked:
+        print("Info: Discord unavailable ({}). Skipping LAN IP notification.".format(blocked))
+        _note_failure(blocked)
+        return False
     webhook_url = config_manager.get_global("discord_webhook_url", "")
-    if not webhook_url:
-        print("Info: Discord webhook is not configured. Skipping LAN IP notification.")
-        return False
-
-    if not network.WLAN(network.STA_IF).isconnected():
-        print("Warning: No internet connection. Skipping Discord notification.")
-        return False
 
     status_code = -1
     try:
-        message = "✅ Pi Paper Clock 已上線\nWebUI: http://{}".format(ip_address)
+        message = "✅ Pico Paper Clock 已上線\nWebUI: http://{}".format(ip_address)
         payload = _discord_payload(message)
         status_code, detail = _post_discord_webhook(webhook_url, payload)
         if status_code in (200, 204):
             print("Success: Discord LAN IP notification sent.")
+            _note_failure("")
             return True
+        _note_failure("http{}".format(status_code))
         if detail:
             print("Error: Discord notification failed. Status code: {}. Response: {}".format(status_code, detail))
         else:
             print("Error: Discord notification failed. Status code: {}".format(status_code))
     except MemoryError:
         print("Error: Memory allocation failed during Discord notification.")
+        _note_failure("enomem")
         return None
     except Exception as e:
         print("Error: Discord notification failed. Details: {}".format(e))
         if "ENOMEM" in str(e):
+            _note_failure("enomem")
             return None
+        _note_failure("{}".format(type(e).__name__))
     finally:
         payload = None
         gc.collect()
@@ -291,14 +432,12 @@ def send_lan_ip(ip_address):
 
 def send_presence_session(start_date, start_time, end_date, end_time, duration_seconds):
     """Sends a completed desk presence session to Discord."""
+    blocked = delivery_blocked()
+    if blocked:
+        print("Info: Discord unavailable ({}). Skipping presence session.".format(blocked))
+        _note_failure(blocked)
+        return False
     webhook_url = config_manager.get_global("discord_webhook_url", "")
-    if not webhook_url:
-        print("Info: Discord webhook is not configured. Skipping presence session.")
-        return False
-
-    if not network.WLAN(network.STA_IF).isconnected():
-        print("Warning: No internet connection. Skipping presence session.")
-        return False
 
     status_code = -1
     try:
@@ -309,18 +448,23 @@ def send_presence_session(start_date, start_time, end_date, end_time, duration_s
         status_code, detail = _post_discord_webhook(webhook_url, payload)
         if status_code in (200, 204):
             print("Success: Discord presence session sent.")
+            _note_failure("")
             return True
+        _note_failure("http{}".format(status_code))
         if detail:
             print("Error: Presence session failed. Status code: {}. Response: {}".format(status_code, detail))
         else:
             print("Error: Presence session failed. Status code: {}".format(status_code))
     except MemoryError:
         print("Error: Memory allocation failed during presence session.")
+        _note_failure("enomem")
         return None
     except Exception as e:
         print("Error: Presence session failed. Details: {}".format(e))
         if "ENOMEM" in str(e):
+            _note_failure("enomem")
             return None
+        _note_failure("{}".format(type(e).__name__))
     finally:
         payload = None
         gc.collect()
@@ -334,18 +478,17 @@ def send_presence_summary(summary_line):
     summary_line format:
     YYYYMMDD,total_seconds,transition_count,longest_session_seconds,session_count
     """
+    blocked = delivery_blocked()
+    if blocked:
+        print("Info: Discord unavailable ({}). Skipping presence summary.".format(blocked))
+        _note_failure(blocked)
+        return False
     webhook_url = config_manager.get_global("discord_webhook_url", "")
-    if not webhook_url:
-        print("Info: Discord webhook is not configured. Skipping presence summary.")
-        return False
-
-    if not network.WLAN(network.STA_IF).isconnected():
-        print("Warning: No internet connection. Skipping presence summary.")
-        return False
 
     parts = summary_line.split(",")
     if len(parts) < 3:
         print("Warning: Invalid presence summary format.")
+        _note_failure("badformat")
         return False
 
     try:
@@ -356,6 +499,7 @@ def send_presence_summary(summary_line):
         session_count = int(parts[4]) if len(parts) >= 5 else (transitions + 1) // 2
     except (ValueError, IndexError):
         print("Warning: Invalid presence summary data.")
+        _note_failure("baddata")
         return False
 
     status_code = -1
@@ -363,11 +507,16 @@ def send_presence_summary(summary_line):
         payload = _presence_summary_embed_payload(
             date, total_seconds, longest_seconds, session_count
         )
-        status_code, _ = _post_discord_webhook(webhook_url, payload)
+        status_code, detail = _post_discord_webhook(webhook_url, payload)
         if status_code in (200, 204):
             print("Success: Discord presence summary sent.")
+            _note_failure("")
             return True
-        print("Error: Presence summary failed. Status code: {}".format(status_code))
+        _note_failure("http{}".format(status_code))
+        if detail:
+            print("Error: Presence summary failed. Status code: {}. Response: {}".format(status_code, detail))
+        else:
+            print("Error: Presence summary failed. Status code: {}".format(status_code))
     except MemoryError:
         print("Warning: Memory allocation failed during presence summary; using L1 fallback.")
         try:
@@ -375,17 +524,28 @@ def send_presence_summary(summary_line):
                 date, total_seconds, longest_seconds, session_count
             ))
             status_code, _ = _post_discord_webhook(webhook_url, fallback)
-            return status_code in (200, 204)
+            if status_code in (200, 204):
+                _note_failure("")
+                return True
+            _note_failure("http{}".format(status_code))
+            return False
         except MemoryError:
             print("Error: Memory allocation failed during presence summary fallback.")
+            _note_failure("enomem")
             return None
         except Exception as e:
             print("Error: Presence summary fallback failed. Details: {}".format(e))
+            if "ENOMEM" in str(e):
+                _note_failure("enomem")
+                return None
+            _note_failure("{}".format(type(e).__name__))
             return False
     except Exception as e:
         print("Error: Presence summary failed. Details: {}".format(e))
         if "ENOMEM" in str(e):
+            _note_failure("enomem")
             return None
+        _note_failure("{}".format(type(e).__name__))
     finally:
         payload = None
         gc.collect()

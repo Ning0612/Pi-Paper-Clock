@@ -12,6 +12,9 @@ from urllib.parse import quote, urlencode, urlsplit
 
 
 API_VERSION = 1
+# "pi-paper-clock" is the pre-v2.6.0 identifier; still accepted so this tool keeps
+# working against devices that have not been reflashed yet.
+SUPPORTED_DEVICE_IDS = ("pico-paper-clock", "pi-paper-clock")
 PICO_MAC_PREFIXES = ("28-cd-c1", "2c-cf-67", "b8-27-eb", "dc-a6-32", "e4-5f-01")
 
 
@@ -154,8 +157,8 @@ class DeviceClient:
             value = json.loads(response.read().decode("utf-8"))
         finally:
             connection.close()
-        if value.get("device") != "pi-paper-clock":
-            raise DeviceError("Host is not a Pi Paper Clock.")
+        if value.get("device") not in SUPPORTED_DEVICE_IDS:
+            raise DeviceError("Host is not a Pico Paper Clock.")
         version = int(value.get("api_version", 0))
         if version != API_VERSION:
             raise DeviceError(f"Unsupported device API version: {version}")

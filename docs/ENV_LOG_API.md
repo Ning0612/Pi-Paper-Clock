@@ -1,4 +1,4 @@
-# Pi Paper Clock Environment Log API
+# Pico Paper Clock Environment Log API
 
 環境（溫濕度）歷史記錄 API，架構與認證模型與 [`IMAGE_API.md`](IMAGE_API.md) 一致：只透過區域 HTTP 提供，皆為 **GET-only、唯讀**，只需 WebUI session cookie，不需要 CSRF token（因為不會異動任何狀態）。Server 不提供 CORS 或 TLS，只應暴露在可信任的 AP/LAN。
 

@@ -217,6 +217,10 @@ class AppControllerDateChangeTests(unittest.TestCase):
         controller.presence = FakePresence()
         controller.env = types.SimpleNamespace(update=lambda *_args, **_kwargs: None)
         controller.time_zone_offset = 8
+        controller.boot_ms = 0
+        # Already latched, so this test does not need the ticks_* shims.
+        controller.min_uptime_reached = True
+        controller.auto_reset_blocked = True
         controller._send_startup_discord_if_ready = lambda: False
         controller._startup_discord_pending = lambda: False
         display_updates = []
@@ -242,6 +246,226 @@ class AppControllerDateChangeTests(unittest.TestCase):
         self.assertEqual(len(display_updates), 2)
         self.assertFalse(state.is_first_run)
         self.assertTrue(state.partial_update)
+
+
+class DiscordStallResetTests(unittest.TestCase):
+    """The reboot of last resort must fire only when Discord is genuinely wedged."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.module = AppControllerDateChangeTests.module
+
+    def _controller(self, failures, pending, uptime_ms, blocked=False,
+                    persist_failed=False, uptime_latched=False):
+        controller = object.__new__(self.module.AppController)
+        controller.presence = types.SimpleNamespace(
+            discord_mem_failures=failures,
+            discord_failures=failures,
+            pending_summary=pending,
+            pending_session=None,
+            pending_persist_failed=persist_failed,
+        )
+        controller.auto_reset_blocked = blocked
+        controller.min_uptime_reached = uptime_latched
+        controller.boot_ms = 0
+        original_ticks_ms = getattr(time, "ticks_ms", None)
+        original_ticks_diff = getattr(time, "ticks_diff", None)
+        time.ticks_ms = lambda: uptime_ms
+        time.ticks_diff = lambda new, old: new - old
+        self.addCleanup(self._restore_ticks, original_ticks_ms, original_ticks_diff)
+        return controller
+
+    def _restore_ticks(self, original_ticks_ms, original_ticks_diff):
+        if original_ticks_ms is None:
+            if hasattr(time, "ticks_ms"):
+                delattr(time, "ticks_ms")
+        else:
+            time.ticks_ms = original_ticks_ms
+        if original_ticks_diff is None:
+            if hasattr(time, "ticks_diff"):
+                delattr(time, "ticks_diff")
+        else:
+            time.ticks_diff = original_ticks_diff
+
+    def _assert_no_reset(self, controller):
+        """_check_discord_stall would import machine to reboot; reaching it raises."""
+        sys.modules.pop("machine", None)
+        controller._check_discord_stall()
+
+    def test_no_reset_below_the_failure_threshold(self):
+        controller = self._controller(
+            self.module.DISCORD_STALL_RESET_FAILURES - 1, "20260725,1,1,1,1", 60 * 60 * 1000
+        )
+        self._assert_no_reset(controller)
+
+    def test_no_reset_when_nothing_is_pending(self):
+        controller = self._controller(
+            self.module.DISCORD_STALL_RESET_FAILURES + 5, None, 60 * 60 * 1000
+        )
+        self._assert_no_reset(controller)
+
+    def test_no_reset_before_minimum_uptime(self):
+        controller = self._controller(
+            self.module.DISCORD_STALL_RESET_FAILURES + 5, "20260725,1,1,1,1", 60 * 1000
+        )
+        self._assert_no_reset(controller)
+
+    def test_no_reset_while_cooldown_blocks_it(self):
+        controller = self._controller(
+            self.module.DISCORD_STALL_RESET_FAILURES + 5,
+            "20260725,1,1,1,1",
+            60 * 60 * 1000,
+            blocked=True,
+        )
+        self._assert_no_reset(controller)
+
+    def test_no_reset_for_non_memory_failures(self):
+        """A deleted webhook must never be 'fixed' by rebooting every two hours."""
+        controller = self._controller(
+            0, "20260725,1,1,1,1", 60 * 60 * 1000, uptime_latched=True
+        )
+        # Plenty of total failures, but none of them memory-related.
+        controller.presence.discord_failures = 500
+        controller.presence.discord_mem_failures = 0
+        self._assert_no_reset(controller)
+
+    def test_no_reset_when_pending_never_reached_flash(self):
+        """Rebooting would discard a notification that only exists in RAM."""
+        controller = self._controller(
+            self.module.DISCORD_STALL_RESET_FAILURES + 5,
+            "20260725,1,1,1,1",
+            60 * 60 * 1000,
+            persist_failed=True,
+            uptime_latched=True,
+        )
+        self._assert_no_reset(controller)
+
+    def test_uptime_latch_survives_ticks_wraparound(self):
+        """ticks_diff is only valid for ~6.2 days; the latch must not un-set."""
+        controller = self._controller(
+            self.module.DISCORD_STALL_RESET_FAILURES,
+            "20260725,1,1,1,1",
+            self.module.DISCORD_STALL_MIN_UPTIME_MS + 1,
+        )
+        self.assertFalse(controller.min_uptime_reached)
+        original_allowed = self.module.AppController._auto_reset_allowed
+        try:
+            # Block before rebooting, so only the latch transition is exercised.
+            self.module.AppController._auto_reset_allowed = lambda _self: False
+            controller._check_discord_stall()
+            self.assertTrue(controller.min_uptime_reached)
+
+            # Simulate the counter wrapping to a bogus negative difference.
+            time.ticks_diff = lambda new, old: -1
+            controller._check_discord_stall()
+            self.assertTrue(controller.min_uptime_reached)
+        finally:
+            self.module.AppController._auto_reset_allowed = original_allowed
+
+    def test_latch_is_set_before_any_stall_exists(self):
+        """The latch must not wait for a stall: by then ticks_diff may be useless."""
+        controller = self._controller(
+            0, None, self.module.DISCORD_STALL_MIN_UPTIME_MS + 1
+        )
+        self.assertFalse(controller.min_uptime_reached)
+        self._assert_no_reset(controller)
+        self.assertTrue(controller.min_uptime_reached)
+
+    def test_cooldown_file_is_not_read_on_every_loop(self):
+        """While stalled, the cooldown file must be re-read only periodically."""
+        controller = self._controller(
+            self.module.DISCORD_STALL_RESET_FAILURES + 1,
+            "20260725,1,1,1,1",
+            60 * 60 * 1000,
+            uptime_latched=True,
+        )
+        reads = []
+        original_allowed = self.module.AppController._auto_reset_allowed
+        try:
+            self.module.AppController._auto_reset_allowed = (
+                lambda _self: reads.append(True) or False
+            )
+            controller._check_discord_stall()
+            self.assertEqual(reads, [], "31 failures is not a multiple of the threshold")
+
+            controller.presence.discord_mem_failures = (
+                self.module.DISCORD_STALL_RESET_FAILURES * 2
+            )
+            controller._check_discord_stall()
+            self.assertEqual(len(reads), 1)
+        finally:
+            self.module.AppController._auto_reset_allowed = original_allowed
+
+    def test_reset_blocked_when_timestamp_cannot_be_persisted(self):
+        """Fail-safe: without a durable cooldown the reboot must not happen."""
+        controller = self._controller(
+            self.module.DISCORD_STALL_RESET_FAILURES,
+            "20260725,1,1,1,1",
+            60 * 60 * 1000,
+            uptime_latched=True,
+        )
+        original_state_file = self.module.AUTO_RESET_STATE_FILE
+        try:
+            self.module.AUTO_RESET_STATE_FILE = str(
+                Path("no-such-dir") / "nested" / "autoreset.log"
+            )
+            self._assert_no_reset(controller)
+            self.assertTrue(controller.auto_reset_blocked)
+        finally:
+            self.module.AUTO_RESET_STATE_FILE = original_state_file
+
+    def test_reset_fires_once_every_condition_is_met(self):
+        controller = self._controller(
+            self.module.DISCORD_STALL_RESET_FAILURES, "20260725,1,1,1,1", 60 * 60 * 1000
+        )
+        resets = []
+        machine_module = types.ModuleType("machine")
+        machine_module.reset = lambda: resets.append(True)
+        sys.modules["machine"] = machine_module
+        original_state_file = self.module.AUTO_RESET_STATE_FILE
+        try:
+            import tempfile
+
+            with tempfile.TemporaryDirectory() as directory:
+                self.module.AUTO_RESET_STATE_FILE = str(Path(directory) / "autoreset.log")
+                controller._check_discord_stall()
+                self.assertEqual(resets, [True])
+                # The timestamp must be persisted so the cooldown survives the reboot.
+                self.assertTrue(Path(self.module.AUTO_RESET_STATE_FILE).exists())
+        finally:
+            self.module.AUTO_RESET_STATE_FILE = original_state_file
+            sys.modules.pop("machine", None)
+
+    def test_cooldown_blocks_a_second_reset_within_the_window(self):
+        original_state_file = self.module.AUTO_RESET_STATE_FILE
+        controller = object.__new__(self.module.AppController)
+        try:
+            import tempfile
+
+            with tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "autoreset.log"
+                self.module.AUTO_RESET_STATE_FILE = str(path)
+
+                path.write_text(str(int(time.time())), encoding="utf-8")
+                self.assertFalse(controller._auto_reset_allowed())
+
+                stale = int(time.time()) - self.module.MIN_SECONDS_BETWEEN_AUTO_RESETS - 60
+                path.write_text(str(stale), encoding="utf-8")
+                self.assertTrue(controller._auto_reset_allowed())
+
+                path.write_text("not-a-number", encoding="utf-8")
+                self.assertTrue(controller._auto_reset_allowed())
+        finally:
+            self.module.AUTO_RESET_STATE_FILE = original_state_file
+
+    def test_missing_state_file_allows_reset(self):
+        original_state_file = self.module.AUTO_RESET_STATE_FILE
+        controller = object.__new__(self.module.AppController)
+        try:
+            self.module.AUTO_RESET_STATE_FILE = str(Path("no-such-dir") / "autoreset.log")
+            self.assertTrue(controller._auto_reset_allowed())
+        finally:
+            self.module.AUTO_RESET_STATE_FILE = original_state_file
 
 
 if __name__ == "__main__":

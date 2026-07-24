@@ -862,7 +862,7 @@ def _handle_image_api(cl, request, require_auth=False):
         for name, spec in IMAGE_SPECS.items():
             specs[name] = {"width": spec[0], "height": spec[1], "bytes": spec[2]}
         _send_json_status(cl, 200, {
-            "device": "pi-paper-clock",
+            "device": "pico-paper-clock",
             "api_version": API_VERSION,
             "heap_free": gc.mem_free(),
             "fs_free": filesystem_free(),

@@ -301,6 +301,17 @@ A: 可以透過網頁介面編輯任一設定檔並儲存，該設定檔會自�
 ### Q: 刪除設定檔有限制嗎？
 A: 系統至少需要保留一個設定檔，無法刪除最後一個。
 
+### Q: Discord 通知突然不再送出了，怎麼查？
+A: 先看裝置上的 `discord_diag.log`（可用 `mpremote connect COM<n> cat :discord_diag.log` 讀取），每行格式為 `日期,時間,事件,可用記憶體,細節`：
+
+- `fail,...,lowmem,n=<次數>,largest=<最大連續區塊>`：heap 碎片化，連續記憶體不足以完成 TLS handshake。這是已知限制，裝置會在連續失敗 30 次（約 30 分鐘）後自動重開機取回連續記憶體，pending 通知不會遺失。
+- `fail,...,http<狀態碼>`：webhook 本身的問題（例如 `http404` 代表 webhook 已被刪除、`http429` 代表被限流），請檢查 `global.discord_webhook_url`。**這類失敗不會觸發自動重啟**，需要你手動處理。
+- `fail,...,offline` / `fail,...,nowebhook`：分別代表當下沒有網路連線、以及尚未設定 webhook；同樣不會觸發自動重啟。
+- `recovered,...,after=<次數>`：先前失敗後已恢復送出。
+- `autoreset,...,failures=<次數>`：曾觸發保底自動重啟。
+
+注意 `/api/v1/device` 回報的 `heap_free` 充足**不代表** Discord 送得出去，關鍵指標是最大連續區塊。
+
 ---
 
 ## 📚 相關資源

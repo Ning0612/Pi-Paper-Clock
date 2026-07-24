@@ -1,4 +1,4 @@
-# Pi Paper Clock 文件索引
+# Pico Paper Clock 文件索引
 
 這個目錄收納需要長期維護的使用、設定、API 與架構文件；根目錄的 `README.md` 只保留專案介紹、快速開始與文件導覽，`AGENTS.md` 與 `CLAUDE.md` 保留給開發流程。
 

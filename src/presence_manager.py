@@ -101,6 +101,60 @@ def _release_display_workspace_before_discord():
         pass
 
 
+# The notifier is imported lazily on purpose: it pulls in network/socket/ssl,
+# which only exist on the device.  A failed import must never block a flush.
+def _tls_headroom_ok():
+    """False only when the notifier positively reports too little contiguous heap."""
+    try:
+        from discord_notifier import has_tls_headroom
+    except Exception:
+        return True
+    try:
+        return has_tls_headroom()
+    except Exception:
+        return True
+
+
+def _largest_block():
+    try:
+        from discord_notifier import largest_contiguous_block
+        return largest_contiguous_block()
+    except Exception:
+        return -1
+
+
+def _delivery_blocked():
+    """Non-empty when sending is impossible regardless of available memory."""
+    try:
+        from discord_notifier import delivery_blocked
+    except Exception:
+        return ""
+    try:
+        return delivery_blocked()
+    except Exception:
+        return ""
+
+
+def _is_memory_failure(reason):
+    return reason == "lowmem" or reason == "enomem"
+
+
+def _last_failure_reason():
+    try:
+        from discord_notifier import last_failure
+        return last_failure() or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def _diag(event, detail=""):
+    try:
+        from discord_notifier import diag_record
+        diag_record(event, detail)
+    except Exception:
+        pass
+
+
 def _exists(path):
     try:
         os.stat(path)
@@ -226,6 +280,7 @@ class PresenceManager:
         "today_transitions", "today_longest_session_seconds", "today_session_count",
         "pending_summary", "pending_session", "flush_summary_first", "last_retry_ms",
         "discord_disabled", "away_since_epoch", "return_since_epoch",
+        "discord_failures", "discord_mem_failures", "pending_persist_failed",
     )
 
     def __init__(self, discord_sender=None, session_sender=None):
@@ -253,6 +308,9 @@ class PresenceManager:
         self.discord_disabled = False
         self.away_since_epoch = None
         self.return_since_epoch = None
+        self.discord_failures = 0
+        self.discord_mem_failures = 0
+        self.pending_persist_failed = False
 
     def update(self, adc_value, threshold, local_time,
                leave_timeout_sec=DEFAULT_PRESENCE_LEAVE_TIMEOUT_SEC,
@@ -648,17 +706,72 @@ class PresenceManager:
             return False
         self.last_retry_ms = time.ticks_ms()
         _release_display_workspace_before_discord()
+
+        # Establish *why* sending is impossible before blaming memory: a missing
+        # webhook or a dead link would otherwise be recorded as starvation and
+        # eventually trigger a reboot that cannot possibly help.
+        blocked = _delivery_blocked()
+        if blocked:
+            self._note_discord_failure(blocked)
+            return False
+
+        # A TLS handshake needs ~20 KiB of *contiguous* heap.  Once the heap is
+        # fragmented below that, every attempt burns seconds only to hit ENOMEM,
+        # so skip the attempt and let the failure counter drive recovery.
+        if not _tls_headroom_ok():
+            self._note_discord_failure("lowmem")
+            return False
+
         sent = False
+        first_reason = ""
         if self.flush_summary_first:
             sent = self._retry_pending_summary(force=True)
             if not sent:
+                first_reason = _last_failure_reason()
                 sent = self._retry_pending_session(force=True)
         else:
             sent = self._retry_pending_session(force=True)
             if not sent:
+                first_reason = _last_failure_reason()
                 sent = self._retry_pending_summary(force=True)
         self.flush_summary_first = not self.flush_summary_first
+        if sent:
+            self.clear_discord_failures()
+        else:
+            # Two pendings can fail for different reasons; if either was memory
+            # starvation the whole round counts as such, so recovery still fires.
+            reason = _last_failure_reason()
+            if _is_memory_failure(first_reason):
+                reason = first_reason
+            self._note_discord_failure(reason)
         return sent
+
+    def _note_discord_failure(self, reason):
+        """Counts a failed delivery, logging the first one and every tenth after.
+
+        Only memory-starvation failures feed the reboot decision: a deleted webhook
+        or a dead network must never be "fixed" by rebooting in a loop.
+        """
+        self.discord_failures += 1
+        count = self.discord_failures
+        is_memory = _is_memory_failure(reason)
+        if is_memory:
+            self.discord_mem_failures += 1
+        else:
+            self.discord_mem_failures = 0
+        if count != 1 and count % 10:
+            return
+        detail = "{},n={}".format(reason, count)
+        if is_memory:
+            detail = "{},largest={}".format(detail, _largest_block())
+        _diag("fail", detail)
+
+    def clear_discord_failures(self):
+        """Resets the stall counters once anything gets through."""
+        if self.discord_failures:
+            _diag("recovered", "after={}".format(self.discord_failures))
+        self.discord_failures = 0
+        self.discord_mem_failures = 0
 
     def flush_startup_discord(self, max_messages=8):
         """Flush pending notifications before display and sensor objects load."""
@@ -742,12 +855,17 @@ class PresenceManager:
         try:
             _append_line(PENDING_FILE, summary)
         except Exception as e:
+            # Only RAM holds this notification now, so a reboot would lose it.
+            # Sticky until the next power cycle: a later queue emptying is not
+            # proof of health, it may itself be the notification going missing.
+            self.pending_persist_failed = True
             print("Presence: failed to save pending summary. {}".format(e))
 
     def _save_pending_session(self, session_line):
         try:
             _append_line(PENDING_SESSION_FILE, session_line)
         except Exception as e:
+            self.pending_persist_failed = True
             print("Presence: failed to save pending session. {}".format(e))
 
     def _clear_pending_summary(self):

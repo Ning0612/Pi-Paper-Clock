@@ -15,6 +15,13 @@ from env_manager import EnvManager, set_env_manager
 
 STARTUP_DISCORD_DELAY_MS = 45 * 1000
 STARTUP_DISCORD_RETRY_MS = 30 * 1000
+# Heap fragmentation can push the TLS handshake permanently out of reach; only a
+# reboot restores a contiguous heap.  Reboot as a last resort, with a cooldown so
+# a genuinely unreachable webhook cannot turn into a boot loop.
+DISCORD_STALL_RESET_FAILURES = 30
+DISCORD_STALL_MIN_UPTIME_MS = 10 * 60 * 1000
+AUTO_RESET_STATE_FILE = "discord_autoreset.log"
+MIN_SECONDS_BETWEEN_AUTO_RESETS = 2 * 60 * 60
 CURRENT_WEATHER_REFRESH_MS = 3 * 60 * 1000
 CURRENT_WEATHER_RETRY_MS = 10 * 60 * 1000
 FORECAST_REFRESH_MS = 30 * 60 * 1000
@@ -28,7 +35,8 @@ class AppController:
         "state", "hw", "lan_server", "lan_ip", "startup_discord_sent",
         "startup_discord_disabled", "startup_discord_attempted", "startup_discord_ready_ms",
         "startup_discord_last_attempt_ms", "chime", "location", "api_key",
-        "time_zone_offset", "presence", "env",
+        "time_zone_offset", "presence", "env", "boot_ms", "min_uptime_reached",
+        "auto_reset_blocked",
     )
 
     def __init__(self, state, hardware, lan_server=None, lan_ip=None):
@@ -64,6 +72,11 @@ class AppController:
             sample_interval_min=config_manager.get_global("env_log.interval_min", 15)
         )
         set_env_manager(self.env)
+        self.boot_ms = time.ticks_ms()
+        # Latched once reached: ticks_diff() is only valid over ~6.2 days, and the
+        # fragmentation this guards against shows up after ~12 days of uptime.
+        self.min_uptime_reached = False
+        self.auto_reset_blocked = False
 
 
     def handle_touch(self, touch_state):
@@ -155,7 +168,73 @@ class AppController:
             if not self._send_startup_discord_if_ready():
                 if not self._startup_discord_pending():
                     self.presence.flush_discord()
+        self._check_discord_stall()
         gc.collect()
+
+    def _auto_reset_allowed(self):
+        """Blocks a second auto-reset until the cooldown has elapsed."""
+        try:
+            with open(AUTO_RESET_STATE_FILE) as f:
+                last = int(f.read().strip())
+        except Exception:
+            return True
+        try:
+            return (time.time() - last) >= MIN_SECONDS_BETWEEN_AUTO_RESETS
+        except Exception:
+            return True
+
+    def _record_auto_reset(self):
+        """Persists the reset timestamp; False means the cooldown cannot be trusted."""
+        try:
+            with open(AUTO_RESET_STATE_FILE, "w") as f:
+                f.write(str(int(time.time())))
+            return True
+        except Exception as e:
+            print("Error: Could not persist the auto-reset timestamp. {}".format(e))
+            return False
+
+    def _check_discord_stall(self):
+        """Reboots when Discord is wedged by heap fragmentation and nothing else."""
+        # Latch on every loop, never only when a stall is already detected: after
+        # ~6.2 days ticks_diff() stops being meaningful, and the fragmentation this
+        # guards against typically appears later than that.
+        if not self.min_uptime_reached:
+            if time.ticks_diff(time.ticks_ms(), self.boot_ms) >= DISCORD_STALL_MIN_UPTIME_MS:
+                self.min_uptime_reached = True
+
+        if self.auto_reset_blocked or not self.min_uptime_reached:
+            return
+        # Only memory starvation is fixable by rebooting; a dead webhook is not.
+        # Gating on multiples of the threshold keeps the cooldown file out of the
+        # common path: it is only read while the count sits on a multiple, i.e. for
+        # the ~60 s until the next flush attempt increments it again.
+        failures = self.presence.discord_mem_failures
+        if failures < DISCORD_STALL_RESET_FAILURES or failures % DISCORD_STALL_RESET_FAILURES:
+            return
+        if not (self.presence.pending_summary or self.presence.pending_session):
+            return
+        if self.presence.pending_persist_failed:
+            # A reboot would discard a notification that never reached flash.
+            return
+        # Evaluated here rather than at boot so the cooldown can expire while running.
+        if not self._auto_reset_allowed():
+            return
+        if not self._record_auto_reset():
+            # Without a durable timestamp a reboot could turn into a boot loop.
+            self.auto_reset_blocked = True
+            return
+
+        print("Error: Discord stalled for {} attempts; rebooting to defragment the heap.".format(
+            self.presence.discord_mem_failures
+        ))
+        try:
+            from discord_notifier import diag_record
+            diag_record("autoreset", "failures={}".format(self.presence.discord_mem_failures))
+        except Exception:
+            pass
+        # Pending notifications are already on flash, so nothing is lost.
+        import machine
+        machine.reset()
 
     def _handle_date_change(self, current_day):
         """Invalidate daily weather data and permit an immediate refresh."""
@@ -193,6 +272,7 @@ class AppController:
             self.startup_discord_sent = result
             if result:
                 self.presence.discord_disabled = False
+                self.presence.clear_discord_failures()
         return True
 
     def _startup_discord_pending(self):
