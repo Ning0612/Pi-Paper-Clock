@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Pi Paper Clock / 完全重置</title>
+<title>Pico Paper Clock / 完全重置</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230a100d'/%3E%3Crect x='2' y='2' width='28' height='28' fill='none' stroke='%23a8d2c4' stroke-width='2'/%3E%3Ctext x='16' y='21' font-family='Consolas,monospace' font-size='12' font-weight='700' fill='%23a8d2c4' text-anchor='middle'%3EPC%3C/text%3E%3C/svg%3E">
 <script>(function(){var k='iot-ui-theme',s=null;try{s=localStorage.getItem(k)}catch(e){}document.documentElement.dataset.theme=(s==='light'||s==='dark')?s:(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light')})();</script>
 <style>
@@ -13,7 +13,7 @@
 </style>
 </head>
 <body>
-<header class="topbar"><div class="topbar-in"><a class="brand" href="/"><span class="brand-mark">PC</span><span class="brand-copy">PI PAPER CLOCK<span class="brand-sub">LOCAL DEVICE / CONTROL DECK</span></span></a><div class="theme-toggle" role="group" aria-label="配色主題切換"><button type="button" data-theme-choice="light" aria-pressed="false">LIGHT</button><button type="button" data-theme-choice="dark" aria-pressed="false">DARK</button></div></div></header>
+<header class="topbar"><div class="topbar-in"><a class="brand" href="/"><span class="brand-mark">PC</span><span class="brand-copy">PICO PAPER CLOCK<span class="brand-sub">LOCAL DEVICE / CONTROL DECK</span></span></a><div class="theme-toggle" role="group" aria-label="配色主題切換"><button type="button" data-theme-choice="light" aria-pressed="false">LIGHT</button><button type="button" data-theme-choice="dark" aria-pressed="false">DARK</button></div></div></header>
 <main class="wrap"><section class="card"><div class="kicker">SYSTEM RESET / COMPLETE</div><h1>完全重置完成</h1><p>所有設定檔已刪除，系統已恢復出廠設定。</p><div class="countdown" id="countdown">5</div><div class="progress-bar"><div class="progress-fill"></div></div><p class="redirect">系統即將重新啟動，請稍候…</p></section></main>
 <footer class="site-footer"><div class="footer-in"><div class="footer-repo"><span class="label">SOURCE</span><a href="https://github.com/Ning0612/pico-paper-clock">Ning0612/pico-paper-clock</a></div><div class="footer-meta">Vanilla HTML／CSS／JS · 無框架 · MIT License</div></div></footer>
 <script>function syncTheme(){var cur=document.documentElement.dataset.theme;document.querySelectorAll('.theme-toggle button').forEach(function(b){var on=b.dataset.themeChoice===cur;b.classList.toggle('active',on);b.setAttribute('aria-pressed',on?'true':'false')})}function setTheme(value){if(value!=='light'&&value!=='dark')value='light';document.documentElement.dataset.theme=value;try{localStorage.setItem('iot-ui-theme',value)}catch(e){}syncTheme()}document.querySelectorAll('.theme-toggle button').forEach(function(b){b.onclick=function(){setTheme(b.dataset.themeChoice)}});syncTheme();var t=5,el=document.getElementById('countdown');setInterval(function(){t--;if(t>=0)el.textContent=t},1000);setTimeout(function(){location.href='/'},5000)</script>

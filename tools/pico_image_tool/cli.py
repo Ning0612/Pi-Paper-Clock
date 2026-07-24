@@ -53,12 +53,12 @@ def _add_device_options(parser):
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="pico-image-tool", description="Convert and manage Pi Paper Clock images.")
+    parser = argparse.ArgumentParser(prog="pico-image-tool", description="Convert and manage Pico Paper Clock images.")
     parser.add_argument("--version", action="version", version="%(prog)s " + __version__)
     commands = parser.add_subparsers(dest="command", required=True)
 
     commands.add_parser("gui", help="Open the desktop GUI.")
-    discovery = commands.add_parser("discover", help="Find Pi Paper Clock devices on local /24 networks.")
+    discovery = commands.add_parser("discover", help="Find Pico Paper Clock devices on local /24 networks.")
     discovery.add_argument("--subnet", action="append", help="CIDR subnet; may be repeated and must be /24 or smaller.")
     discovery.add_argument("--timeout", type=float, default=5.0)
 

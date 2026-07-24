@@ -13,6 +13,7 @@ from tools.pico_image_tool.client import DeviceClient, DeviceError, DeviceInfo, 
 class Handler(BaseHTTPRequestHandler):
     request_record = None
     setup_required = False
+    device_id = "pico-paper-clock"
 
     def log_message(self, *_):
         pass
@@ -36,7 +37,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/api/v1/device":
-            self._json(200, {"device": "pi-paper-clock", "api_version": 1, "heap_free": 1234, "fs_free": 5678})
+            self._json(200, {"device": Handler.device_id, "api_version": 1, "heap_free": 1234, "fs_free": 5678})
         elif self.path == "/api/v1/auth/status":
             self._json(200, {"setup_required": Handler.setup_required, "authenticated": False, "csrf_token": "pre-auth"})
         else:
@@ -75,6 +76,23 @@ class ClientTests(unittest.TestCase):
         info = DeviceClient(self.host).info()
         self.assertEqual(info.api_version, 1)
         self.assertEqual(info.fs_free, 5678)
+
+    def test_device_info_accepts_legacy_identifier(self):
+        """Devices still on the pre-v2.6.0 firmware must remain reachable."""
+        Handler.device_id = "pi-paper-clock"
+        try:
+            info = DeviceClient(self.host).info()
+            self.assertEqual(info.api_version, 1)
+        finally:
+            Handler.device_id = "pico-paper-clock"
+
+    def test_device_info_rejects_unknown_identifier(self):
+        Handler.device_id = "some-other-device"
+        try:
+            with self.assertRaises(DeviceError):
+                DeviceClient(self.host).info()
+        finally:
+            Handler.device_id = "pico-paper-clock"
 
     def test_upload_path_headers_body_and_progress(self):
         progress = []
@@ -142,7 +160,7 @@ class ClientTests(unittest.TestCase):
     def test_discover_falls_back_when_arp_cache_misses_device(self, ping_host, arp_hosts, info):
         arp_hosts.return_value = [ipaddress.ip_address("192.168.1.1")]
         info.side_effect = [
-            DeviceError("not a Pi Paper Clock"),
+            DeviceError("not a Pico Paper Clock"),
             DeviceInfo("192.168.1.3", 1, 1234, 5678),
         ]
 

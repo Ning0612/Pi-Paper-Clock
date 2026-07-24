@@ -1,4 +1,4 @@
-# Pi Paper Clock Image API v1
+# Pico Paper Clock Image API v1
 
 API 只透過區域 HTTP 提供。`GET /api/v1/device` 允許未驗證探索；裝置完成首次設定後，所有圖片清單與異動都需要 WebUI session cookie。`PUT`、`POST`、`DELETE` 另需 `X-Pico-Clock-API: 1` 與 session CSRF token。Server 不提供 CORS 或 TLS，只應暴露在可信任的 AP/LAN。
 
@@ -6,7 +6,9 @@ API 只透過區域 HTTP 提供。`GET /api/v1/device` 允許未驗證探索；�
 
 ## 探索
 
-`GET /api/v1/device` 回傳固定的 `device: "pi-paper-clock"`、整數 `api_version: 1`、可用 heap/storage 與圖片尺寸。Client 必須拒絕未知 device 或 API 版本。
+`GET /api/v1/device` 回傳固定的 `device: "pico-paper-clock"`、整數 `api_version: 1`、可用 heap/storage 與圖片尺寸。Client 必須拒絕未知 device 或 API 版本。
+
+> v2.6.0 起裝置回傳的識別字串由 `pi-paper-clock` 改為 `pico-paper-clock`。桌面工具同時接受兩者，因此尚未更新韌體的裝置仍可正常連線。
 
 ## Collections
 
