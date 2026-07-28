@@ -5,7 +5,31 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)，
 且本專案遵循 [Semantic Versioning](https://semver.org/spec/v2.0.0.html)。
 
-## [Unreleased]
+## [2.6.1] - 2026-07-28
+
+本版本把 v2.6.0 引入的 Discord 保底自動重啟機制修到堪用：縮短離席時的恢復延遲、補上三個會讓保底重啟失效或反而害死主程式的容錯缺陷，並停止把重啟換來的唯一 TLS 窗口浪費在重發使用者早已知道的 IP 上。
+
+### Fixed
+
+- 修正在無光環境重新開機後，電子紙停留在開機畫面且**永遠不進入睡眠**的問題。`main.py` 會在建立 controller 前無條件畫出開機畫面，而主迴圈原本只在偵測到「在席→離席」的轉換時才清屏睡眠；暗處開機時第一輪就已是離席狀態，不存在該轉換，於是開機畫面留在面板上、電子紙持續保持喚醒直到使用者開燈。面板長時間不睡眠是 Waveshare 明確不建議的用法，比畫面卡住本身更需要處理。此路徑原本罕見，但 Discord 記憶體保底重啟使「暗處開機」成為常態（離席＝變暗＝觸發通知＝送不出去＝約 2 分鐘後重啟），兩者相乘後每晚都會發生。修法是把離席顯示收斂由轉換驅動改為**狀態驅動**：`AppState` 新增 `display_asleep` 旗標（初值 `False`，因為開機畫面已經畫上面板），主迴圈只要處於離席且旗標未設就清屏睡眠並設起旗標，在席時清掉旗標，使所有進入離席的路徑收斂到同一個終態。
+- 修正圖片預覽的 early return 會短路整輪主迴圈的問題。`consume_preview()` 命中時原本會立刻 `return`，因此客戶端只要每輪送一次 `preview=true`（批次上傳做得到），就能讓 `presence.update()`（連帶離席 debounce）、環境取樣、按鈕處理與 `_check_discord_stall()` 在整段期間完全不執行；離席期間畫上的預覽也會讓面板一直醒著。現在預覽改為在迴圈開頭消耗、在在席分支繪製，**只取代該輪的頁面渲染**，迴圈其餘部分照常跑完；預覽不更新 `last_minute`／`partial_update`，下一個觸發點即恢復正常頁面。離席時預覽直接丟棄不繪製——面板已睡眠且環境無光，畫上去看不見，只會把面板叫醒。
+
+- 修正離席清屏睡眠失敗會終止整個主程式的問題。`main.py` 以 `while True: controller.run_main_loop()` 裸迴圈驅動、未包 try/except，因此 `clear_display_and_sleep()` 拋出的例外（低 heap、電子紙 I/O 失敗）會直接結束程式；而它正好位於 `_check_discord_stall()` 之前，於是最需要保底重啟的時刻反而永遠等不到重啟。現在改為捕捉例外並以 `DISPLAY_SLEEP_RETRY_MS`（60 秒）退避後重試——完整清屏加面板初始化太昂貴，每秒重試會排擠 LAN polling、presence 更新與 stall 檢查。此路徑在本次改動後更關鍵：暗處重開機必定會走一次離席分支。
+- 修正 `discord_autoreset.log` 讀取失敗或內容損毀時冷卻機制失效的問題。原本任何讀取例外都回傳「允許重啟」，等同放棄唯一的 boot-loop 防護；離席門檻縮短為約 2 分鐘後，這會退化成每次 uptime gate 到期就重開一次。現在只有「檔案不存在」（ENOENT，代表從未自動重啟過）維持放行，其餘讀取錯誤與時鐘不可用一律拒絕；檔案存在但內容不可用（不可解析或 `<= 0`）時則重寫一個新的時間戳並拒絕本次重啟，重寫也失敗就設起 `auto_reset_blocked`，與呼叫端寫入失敗時的處置一致。
+- 修正 NTP 同步失敗的開機會讓保底自動重啟被永久封鎖的問題。Pico W 沒有電池供電的 RTC，NTP 失敗時 `time.time()` 會從 port epoch 重新起算，而 `discord_autoreset.log` 內是由已同步開機寫下的大 epoch 值，兩者相減恆為負，冷卻判斷因此永遠不成立——保底重啟一路失效到 NTP 再次成功為止。現在偵測到時間戳比當下時鐘還新時，改為重寫成當下時基並拒絕本次重啟（等滿一次冷卻）；直接視為「已到期」則會每輪放行，而每次重啟又重置時基，形成 boot loop。
+
+### Changed
+
+- 縮短 Discord 通知堵塞後的恢復延遲：保底自動重啟門檻由「連續 30 次記憶體失敗」改為**依在席狀態選擇**——離席 `DISCORD_STALL_AWAY_FAILURES`（2 次，約 2 分鐘）、在席或狀態未知 `DISCORD_STALL_PRESENT_FAILURES`（10 次，約 10 分鐘）。依據為 2026-07-26 的實機複測：穩態下最大連續區塊僅約 10 KiB，只有 20 KiB 門檻的一半，且 `release_display_workspace()` 只增加 `mem_free`（56,512→61,584 B）而**完全不改變最大連續區塊**（前後同為 10,240 B）。既然等待不會改變結果，門檻改由「重開機當下的代價」決定：`presence_manager` 只在「離開書桌」的 transition 產生 pending session summary，因此幾乎所有待送通知誕生時裝置都正好離席、面板已清屏睡眠、使用者不在場，重開成本接近零；在席時重開則要讓使用者盯著開機畫面等 Wi-Fi 重連與 NTP 同步，故維持較慢的門檻。在席門檻刻意不設為「永不」——光感若把亮著的空房間誤判為在席，only-away 觸發會讓通知卡得比改動前更久。取捨已知：heap 若在第 3–9 次之間恢復，離席門檻會比舊門檻多一次重啟；上述量測取自單一裝置的 `.mpy` 部署，其他部署模式需重新量測。冷卻維持 2 小時以保留 boot-loop 防護，因此**吞吐上限未變**（冷卻為 per-reboot，且 `flush_startup_discord()` 每次開機最多清 8 筆），縮短的是單則通知的等待。
+- 自動重啟的觸發判斷由「失敗數為門檻的整數倍」改為 `stall_checked_failures`／`stall_checked_threshold` latch：同一組（失敗數，門檻）只評估一次（冷卻檔因此仍維持每次失敗才讀一次，而非每輪主迴圈都讀），失敗數或門檻任一改變就重新評估。這是門檻可隨狀態變動的前提——使用者離開書桌使門檻下降時必須立即重評，而非等到下一次失敗；同時消除了原本「被 uptime gate 或冷卻擋掉一次就得等到下一個倍數、延遲加倍」的耦合。`DISCORD_STALL_MIN_UPTIME_MS` 維持 5 分鐘，但不再需要與門檻對齊，只需長於啟動通知窗口加一次重試。
+- `discord_diag.log` 的 `autoreset` 記錄與對應 console 訊息加註觸發當下的在席狀態（`away`／`present`），否則事後無法把失敗次數對回是哪一個門檻。
+- 因記憶體不足自動重開機後，若 LAN IP 與重啟前相同，開機不再送出「已上線」通知。那次重啟買到的是唯一一個可用的 TLS 窗口，而啟動階段原本第一件事就是重發一則使用者早已知道的 IP 通知，把窗口用掉、pending 在席通知只能再等下一次重啟（至少 2 小時）。現在 `_check_discord_stall()` 會在 `machine.reset()` 前把當下**已公告過**的 IP 寫入 `discord_autoreset_ip.log`，`main.py` 在啟動窗口讀取後立即刪除：IP 相同就跳過通知並標記為已送（避免 controller 每 30 秒重試），把窗口讓給 `flush_startup_discord()`。只有確實送出過的 IP 會被記錄——從未公告成功的位址仍照常嘗試，否則使用者根本無從得知裝置在哪；記錄採讀取即消費（且在「是否連上網路」判斷之外執行，避免一次沒連上線的開機把記錄留給後面某次本該公告的開機；刪除失敗時視為未消費並照常公告），因此手動斷電重開或 IP 真的改變時都會照常送出。
+
+### Added
+
+- `tests/test_app_controller.py` 新增 `test_a_touch_landing_on_a_preview_pass_is_not_swallowed`，斷言預覽輪的觸控仍會傳給 `handle_touch()`。`get_touch_state()` 會從驅動層取走事件且不會在下一輪重播，因此改為每輪讀取觸控之後，觸控處理必須與渲染分支解耦，否則預覽剛好落在同一輪時會吞掉一次圖片切換。
+- `tests/test_app_controller.py` 新增保底重啟的防迴歸測試：`test_no_reset_at_the_away_threshold_while_present` 與 `test_unknown_presence_uses_the_present_threshold`（在席與狀態未知時不得套用離席門檻）、`test_reset_still_fires_while_present_at_the_slower_threshold`（在席安全網仍在，光感誤判時不會永遠卡住）、`test_leaving_the_desk_re_evaluates_a_count_already_checked`（門檻下降立即重評，不等下一次失敗）、`test_cooldown_file_is_read_once_per_failed_attempt` 與 `test_a_count_that_restarts_from_zero_is_checked_again`（latch 的節流與重置語意）、`test_reset_does_not_wait_for_a_multiple_of_the_threshold`（非倍數的失敗數同樣會觸發）、`test_a_pending_session_alone_is_enough_to_reboot`、`test_a_failing_panel_does_not_take_the_stall_check_down_with_it`（清屏失敗不得終止主迴圈）。`test_uptime_gate_outlasts_the_startup_window` 取代原本的倍數餘裕斷言，改為要求 uptime gate 長於啟動通知窗口加一次重試。
+- `tests/test_app_controller.py` 新增四個顯示收斂的防迴歸測試：`test_starting_up_already_away_clears_and_sleeps_the_panel_once`（暗處開機時沒有轉換也要清屏睡眠，且只做一次）、`test_previews_arriving_while_away_never_bypass_the_away_branch`（離席期間的連續預覽不得喚醒已睡眠的面板）、`test_previews_while_present_do_not_starve_the_housekeeping`（在席期間的連續預覽不得讓 presence 更新、環境取樣與 stall 檢查停擺）、`test_unknown_presence_state_is_treated_as_away`（`current_state` 為 `None` 時 fail closed）。
 
 ## [2.6.0] - 2026-07-25
 

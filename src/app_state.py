@@ -8,6 +8,7 @@ class AppState:
         "weather_forecast", "weather_forecast_last_updated", "weather_forecast_last_attempted",
         "current_temperature", "current_humidity", "sensor_last_updated_ms",
         "is_first_run", "partial_update", "display_image_path", "current_event_date",
+        "display_asleep",
     )
     def __init__(self):
         self.last_minute = -1
@@ -31,3 +32,8 @@ class AppState:
         self.partial_update = False
         self.display_image_path = ""
         self.current_event_date = ""
+
+        # Starts False because main.py paints the loading page before the
+        # controller exists: the panel is awake and holding content, so the
+        # first away pass still owes it a clear-and-sleep.
+        self.display_asleep = False
