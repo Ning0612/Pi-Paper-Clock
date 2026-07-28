@@ -641,11 +641,34 @@ class DiscordStallResetTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.module = AppControllerDateChangeTests.module
+        # Re-registered here rather than reused: the class above removes its own
+        # discord_notifier stub in tearDownClass, and it runs first.  Without this
+        # the `from discord_notifier import ...` inside _check_discord_stall() just
+        # raises into its own except and the reboot-time bookkeeping goes untested.
+        cls.recorded_autoreset_ips = []
+        cls.original_discord_module = sys.modules.get("discord_notifier")
+        discord_module = types.ModuleType("discord_notifier")
+        discord_module.diag_record = lambda *_args, **_kwargs: None
+        discord_module.record_autoreset_ip = lambda ip: (
+            cls.recorded_autoreset_ips.append(ip) or True
+        )
+        sys.modules["discord_notifier"] = discord_module
+
+    @classmethod
+    def tearDownClass(cls):
+        if cls.original_discord_module is None:
+            sys.modules.pop("discord_notifier", None)
+        else:
+            sys.modules["discord_notifier"] = cls.original_discord_module
 
     def _controller(self, failures, pending, uptime_ms, blocked=False,
-                    persist_failed=False, uptime_latched=False, current_state=False):
+                    persist_failed=False, uptime_latched=False, current_state=False,
+                    startup_discord_sent=True, lan_ip="192.168.1.50"):
         """Defaults to the away state: the cheap-reboot path the threshold targets."""
+        self.recorded_autoreset_ips.clear()
         controller = object.__new__(self.module.AppController)
+        controller.startup_discord_sent = startup_discord_sent
+        controller.lan_ip = lan_ip
         controller.presence = types.SimpleNamespace(
             discord_mem_failures=failures,
             discord_failures=failures,
@@ -977,6 +1000,29 @@ class DiscordStallResetTests(unittest.TestCase):
         self.assertEqual(self._stall_check_with_reboot_available(controller), [True])
         # The timestamp must be persisted so the cooldown survives the reboot.
         self.assertTrue(Path(self.module.AUTO_RESET_STATE_FILE).exists())
+
+    def test_an_announced_ip_is_noted_before_the_reboot(self):
+        """The reboot buys one TLS window; re-announcing an unchanged address
+        would spend it on what the user already knows instead of the backlog."""
+        controller = self._controller(
+            self.module.DISCORD_STALL_AWAY_FAILURES, "20260725,1,1,1,1", 60 * 60 * 1000
+        )
+        self.assertEqual(self._stall_check_with_reboot_available(controller), [True])
+        self.assertEqual(
+            self.recorded_autoreset_ips, ["192.168.1.50"]
+        )
+
+    def test_an_ip_that_was_never_announced_is_not_noted(self):
+        """Suppressing a notice that never went out would leave the user without
+        the address entirely."""
+        controller = self._controller(
+            self.module.DISCORD_STALL_AWAY_FAILURES,
+            "20260725,1,1,1,1",
+            60 * 60 * 1000,
+            startup_discord_sent=False,
+        )
+        self.assertEqual(self._stall_check_with_reboot_available(controller), [True])
+        self.assertEqual(self.recorded_autoreset_ips, [])
 
     def test_reset_still_fires_while_present_at_the_slower_threshold(self):
         """The away path is not the only way out: a stuck presence reading must not

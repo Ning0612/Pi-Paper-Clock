@@ -20,7 +20,48 @@ _PROBE_STEP = 1024
 DIAG_FILE = "discord_diag.log"
 MAX_DIAG_BYTES = 6 * 1024
 
+# Written just before a memory auto-reset, holding the LAN IP the online notice
+# had already announced.  Read once at the next boot to decide whether that
+# notice is worth repeating -- see consume_autoreset_ip().
+AUTORESET_IP_FILE = "discord_autoreset_ip.log"
+
 _last_failure = ""
+
+
+def record_autoreset_ip(ip_address):
+    """Notes the announced IP so the next boot can skip re-announcing it."""
+    try:
+        with open(AUTORESET_IP_FILE, "w") as f:
+            f.write(str(ip_address))
+        return True
+    except Exception as e:
+        # Not fatal: without the note the next boot simply sends the notice as
+        # usual, which is the safe direction to fail in.
+        print("Warning: could not record the auto-reset IP. {}".format(e))
+    return False
+
+
+def consume_autoreset_ip():
+    """Returns the IP announced before a memory auto-reset, clearing the note.
+
+    Cleared on read so it only ever applies to the boot that the auto-reset
+    caused: a later power cycle finds nothing and announces normally, which is
+    what makes "did the address change while I was away" answerable at all.
+    """
+    try:
+        with open(AUTORESET_IP_FILE) as f:
+            ip_address = f.read().strip()
+    except Exception:
+        return ""
+    try:
+        os.remove(AUTORESET_IP_FILE)
+    except Exception as e:
+        # A note that could not be cleared would go on suppressing the notice at
+        # every later boot with the same address, including power cycles.  Report
+        # nothing consumed instead: one redundant notice beats going silent.
+        print("Warning: could not clear the auto-reset IP note. {}".format(e))
+        return ""
+    return ip_address
 
 
 def last_failure():

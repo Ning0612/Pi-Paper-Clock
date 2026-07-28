@@ -406,10 +406,17 @@ class AppController:
             self.presence.discord_mem_failures, where
         ))
         try:
-            from discord_notifier import diag_record
+            from discord_notifier import diag_record, record_autoreset_ip
             diag_record("autoreset", "failures={},{}".format(
                 self.presence.discord_mem_failures, where
             ))
+            if self.startup_discord_sent and self.lan_ip:
+                # The online notice costs the one TLS window a reboot buys, and
+                # after an auto-reset it usually carries an address the user was
+                # already told.  Note it so the next boot can spend that window on
+                # the backlog instead.  Only an address that actually went out is
+                # worth suppressing -- one that never made it still owes its notice.
+                record_autoreset_ip(self.lan_ip)
         except Exception:
             pass
         # Pending notifications are already on flash, so nothing is lost.

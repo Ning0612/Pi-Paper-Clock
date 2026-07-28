@@ -309,7 +309,7 @@ A: 先看裝置上的 `discord_diag.log`（可用 `mpremote connect COM<n> cat :
 - `fail,...,http<狀態碼>`：webhook 本身的問題（例如 `http404` 代表 webhook 已被刪除、`http429` 代表被限流），請檢查 `global.discord_webhook_url`。**這類失敗不會觸發自動重啟**，需要你手動處理。
 - `fail,...,offline` / `fail,...,nowebhook`：分別代表當下沒有網路連線、以及尚未設定 webhook；同樣不會觸發自動重啟。
 - `recovered,...,after=<次數>`：先前失敗後已恢復送出。
-- `autoreset,...,failures=<次數>,<away|present>`：曾觸發保底自動重啟。末欄是觸發當下的在席狀態，也就是套用了哪一個門檻（`away`＝2 次、`present`＝10 次）；沒有它就無法判斷失敗次數是否合乎預期。
+- `autoreset,...,failures=<次數>,<away|present>`：曾觸發保底自動重啟。末欄是觸發當下的在席狀態，也就是套用了哪一個門檻（`away`＝2 次、`present`＝10 次）；沒有它就無法判斷失敗次數是否合乎預期。**這類重啟之後不會再送「已上線」通知**（若 IP 未變）——那次重啟唯一能用的 TLS 窗口要留給積壓的在席通知，不是拿來重報一個你已經知道的位址。IP 真的變了、或你自己斷電重開，則照常送出。
 
 注意 `/api/v1/device` 回報的 `heap_free` 充足**不代表** Discord 送得出去，關鍵指標是最大連續區塊。
 

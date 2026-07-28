@@ -135,6 +135,57 @@ class DiscordNotifierTests(unittest.TestCase):
         progress, percent, color = self.module._presence_progress(86400 * 12)
         self.assertEqual((progress, percent, color), ("🟩" * 10, 999, 3066993))
 
+    def test_the_autoreset_ip_note_is_consumed_on_read(self):
+        """It must apply only to the boot its auto-reset caused.
+
+        Left behind, a later power cycle would silently skip the online notice
+        too, and the address would stop being announced at all.
+        """
+        original_file = self.module.AUTORESET_IP_FILE
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                self.module.AUTORESET_IP_FILE = str(Path(directory) / "autoreset_ip.log")
+
+                self.assertEqual(self.module.consume_autoreset_ip(), "")
+
+                self.assertTrue(self.module.record_autoreset_ip("192.168.1.50"))
+                self.assertEqual(self.module.consume_autoreset_ip(), "192.168.1.50")
+                self.assertFalse(os.path.exists(self.module.AUTORESET_IP_FILE))
+                self.assertEqual(self.module.consume_autoreset_ip(), "")
+        finally:
+            self.module.AUTORESET_IP_FILE = original_file
+
+    def test_a_note_that_cannot_be_cleared_reports_nothing_consumed(self):
+        """Left in place it would suppress the notice at every later boot with the
+        same address, power cycles included.  One redundant notice beats silence."""
+        original_file = self.module.AUTORESET_IP_FILE
+        original_remove = os.remove
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                self.module.AUTORESET_IP_FILE = str(Path(directory) / "autoreset_ip.log")
+                self.module.record_autoreset_ip("192.168.1.50")
+
+                def failing_remove(_path):
+                    raise OSError(13, "denied")
+
+                os.remove = failing_remove
+                self.assertEqual(self.module.consume_autoreset_ip(), "")
+        finally:
+            os.remove = original_remove
+            self.module.AUTORESET_IP_FILE = original_file
+
+    def test_an_unwritable_autoreset_ip_note_is_not_fatal(self):
+        """Failing to note it just means the next boot announces as usual."""
+        original_file = self.module.AUTORESET_IP_FILE
+        try:
+            self.module.AUTORESET_IP_FILE = str(
+                Path("no-such-dir") / "nested" / "autoreset_ip.log"
+            )
+            self.assertFalse(self.module.record_autoreset_ip("192.168.1.50"))
+            self.assertEqual(self.module.consume_autoreset_ip(), "")
+        finally:
+            self.module.AUTORESET_IP_FILE = original_file
+
     def test_presence_session_message_uses_shared_l1_format(self):
         message = self.module._presence_session_message(
             "20260714", "090500", "20260715", "101500", 4200
