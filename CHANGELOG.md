@@ -5,7 +5,9 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)，
 且本專案遵循 [Semantic Versioning](https://semver.org/spec/v2.0.0.html)。
 
-## [Unreleased]
+## [2.6.1] - 2026-07-28
+
+本版本把 v2.6.0 引入的 Discord 保底自動重啟機制修到堪用：縮短離席時的恢復延遲、補上三個會讓保底重啟失效或反而害死主程式的容錯缺陷，並停止把重啟換來的唯一 TLS 窗口浪費在重發使用者早已知道的 IP 上。
 
 ### Fixed
 
