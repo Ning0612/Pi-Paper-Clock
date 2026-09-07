@@ -6,8 +6,8 @@ def update_page_weather(current_weather, weather_forecast, display_image_path, p
     """Updates the display to show weather and time information with DHT22 sensor data and custom image.
     
     Args:
-        current_weather: Current weather data from OpenWeather API (temp, condition)
-        weather_forecast: Weather forecast list from OpenWeather API
+        current_weather: Current weather data from the configured weather provider
+        weather_forecast: Weather forecast list from the configured weather provider
         display_image_path: Path to custom image
         partial_update: Whether to use partial screen update
         t: Current time tuple

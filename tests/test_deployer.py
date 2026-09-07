@@ -1,6 +1,7 @@
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from tools.pico_deploy.deployer import (
@@ -12,6 +13,7 @@ from tools.pico_deploy.deployer import (
     build_deploy_plan,
 )
 from tools.pico_deploy import mpy_compiler
+from tools.pico_deploy import deployer as deployer_module
 from tools.pico_deploy.jobs import Job, JobQueue
 from tools.pico_deploy.gui import ImageJob, PicoDeployTool
 from tools.pico_image_tool.conversion import ConversionOptions
@@ -29,6 +31,21 @@ class FakeRunner:
 
 
 class DeployerTests(unittest.TestCase):
+    def test_runner_finds_unix_mpremote_next_to_python(self):
+        with patch.object(deployer_module.shutil, "which", return_value=None), patch.object(
+            deployer_module.sys, "executable", "/venv/bin/python"
+        ), patch.object(
+            deployer_module.Path,
+            "exists",
+            return_value=True,
+        ):
+            runner = deployer_module.MpremoteRunner("/dev/tty.test")
+
+        self.assertEqual(
+            runner.base_command,
+            ["/venv/bin/mpremote", "connect", "/dev/tty.test"],
+        )
+
     def test_manifest_is_stable_and_excludes_config_by_default(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

@@ -28,11 +28,11 @@ py -3 -m venv .venv
 if (!(Test-Path src\config.json)) { Copy-Item src\config.json.example src\config.json }
 ```
 
-再編輯 `src/config.json`，至少填入一個 profile 的 Wi-Fi 設定；Weather API Key 為需要顯示天氣時的必要設定。完整 schema、數值範圍與 secret 欄位請見 [`CONFIG_GUIDE.md`](CONFIG_GUIDE.md)。
+再編輯 `src/config.json`，至少填入一個 profile 的 Wi-Fi 設定與天氣經緯度；Open-Meteo 不需要 API Key。完整 schema、數值範圍與 secret 欄位請見 [`CONFIG_GUIDE.md`](CONFIG_GUIDE.md)。
 
 ## 上傳韌體檔案
 
-`tools/pico_deploy/upload_cli.py` 需要 `mpremote`，會上傳 `src/` 中的 Python/JSON、圖片與目錄，完成後重啟裝置並開啟互動式 REPL；根目錄 `upload.py` 仍可作為相容 wrapper：
+`tools/pico_deploy/upload_cli.py` 需要 `mpremote`，會上傳 `src/` 中的 Python、圖片與 WebUI，預設保留裝置上的 `config.json`，完成後重啟裝置並開啟互動式 REPL；根目錄 `upload.py` 仍可作為相容 wrapper：
 
 ```powershell
 .\.venv\Scripts\python.exe tools\pico_deploy\upload_cli.py --port COM7 --no-clean
@@ -45,6 +45,7 @@ if (!(Test-Path src\config.json)) { Copy-Item src\config.json.example src\config
 | `--port COM7` | 指定 Pico W 序列埠；未指定時由 `mpremote` 自動偵測 |
 | `--no-images` | 不上傳圖片 |
 | `--no-config` | 不上傳也不刪除裝置上的 `config.json` |
+| `--include-config` | 明確允許上傳本機 `config.json`；會覆寫裝置設定，僅在確認目的地時使用 |
 | `--no-clean` | 跳過部署前清理 |
 | `--recursive-clean` | 遞迴刪除裝置檔案與目錄後再部署 |
 | `--mpy` | 部署前用 `mpy-cross` 將 `.py` 預編譯為 `.mpy` 省 flash（`epaper.py`／`main.py`／`config.json` 除外），opt-in、非預設行為，需額外 `pip install mpy-cross==1.24.1.post3`（僅部署時需要，裝置本身不需要）；實測可省下裝置約 100 KiB 以上的剩餘空間，細節見 `docs/ARCHITECTURE.md`「Flash 儲存邊界」 |
@@ -76,7 +77,7 @@ GUI 預設不清理裝置，也不覆寫 `config.json`。遞迴清理與 config 
 1. 查看電子紙顯示的 AP SSID、密碼與 IP。預設 IP 是 `192.168.4.1`，預設 SSID/密碼是 `Pi_Clock_AP` / `12345678`。
 2. 用手機或電腦連線到該 AP。
 3. 開啟 `http://192.168.4.1`。
-4. 在設定頁選取或建立 profile，填入 Wi-Fi SSID、密碼、天氣地點、時區、光感門檻與響聲設定。
+4. 在設定頁選取或建立 profile，填入 Wi-Fi SSID、密碼、天氣緯度／經度、時區、光感門檻與響聲設定。
 5. 按下儲存並重啟；裝置會將該 profile 設為 active profile。
 
 AP 頁面也提供圖片庫、在席統計與完全重置入口。LAN 模式的設定與圖片管理受認證保護；不要把裝置服務暴露在不可信任的網路。

@@ -12,7 +12,7 @@
 | `events/birthday/` | 生日圖片 | 128 × 128 |
 | `events/MMDD/` | 特定日期圖片，例如 `events/1225/` | 128 × 128 |
 | `login/` | 啟動與連線過渡畫面 | 296 × 128 |
-| `weather_icons/` | OpenWeatherMap 天氣圖示 | 32 × 32 |
+| `weather_icons/` | 天氣狀態圖示（依 WMO code 對應） | 32 × 32 |
 
 事件資料夾使用四位數 `MMDD`；檔名使用 `.bin`。Weather icons 是系統資產，不透過圖片 API 修改。
 

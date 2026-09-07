@@ -1,14 +1,44 @@
 # weather.py
-import time
 import urequests
 import network
 import gc
-import ujson
+import time
 
-OPENWEATHER_BASE_URL = "http://api.openweathermap.org/data/2.5"
-FORECAST_COUNTS = (40, 32, 28, 24, 20, 16, 12, 8)
-FORECAST_READ_BUFFER_SIZE = 256
-MAX_FORECAST_ENTRY_BYTES = 2048
+OPEN_METEO_BASE_URL = "https://api.open-meteo.com/v1/forecast"
+WEATHER_REQUEST_TIMEOUT_SEC = 5
+
+# Keep the existing icon names used by display_manager.py. Open-Meteo returns
+# WMO weather interpretation codes instead of provider-specific condition strings.
+WMO_CONDITION_MAP = {
+    0: "Clear",
+    1: "Clouds",
+    2: "Clouds",
+    3: "Clouds",
+    45: "Fog",
+    48: "Fog",
+    51: "Drizzle",
+    53: "Drizzle",
+    55: "Drizzle",
+    56: "Drizzle",
+    57: "Drizzle",
+    61: "Rain",
+    63: "Rain",
+    65: "Rain",
+    66: "Rain",
+    67: "Rain",
+    71: "Snow",
+    73: "Snow",
+    75: "Snow",
+    77: "Snow",
+    80: "Rain",
+    81: "Rain",
+    82: "Rain",
+    85: "Snow",
+    86: "Snow",
+    95: "Thunderstorm",
+    96: "Thunderstorm",
+    99: "Thunderstorm",
+}
 
 
 def _log_heap(label):
@@ -34,14 +64,16 @@ def _make_request_with_retry(url, max_retries=2, delay=2):
         try:
             gc.collect()
             _log_heap("before weather request")
-            response = urequests.get(url, timeout=5)
+            response = urequests.get(url, timeout=WEATHER_REQUEST_TIMEOUT_SEC)
             if response.status_code == 200:
                 _log_heap("after weather request")
                 result = response
                 response = None
                 return result
             else:
-                print(f"Error: API request failed on attempt {attempt + 1}/{max_retries}. Status code: {response.status_code}")
+                print("Error: API request failed on attempt {}/{}. Status code: {}".format(
+                    attempt + 1, max_retries, response.status_code
+                ))
         except OSError as e:
             if e.errno == 103:
                 print(f"Warning: Connection aborted on attempt {attempt + 1}/{max_retries}.")
@@ -64,257 +96,178 @@ def _make_request_with_retry(url, max_retries=2, delay=2):
         if attempt < max_retries - 1:
             time.sleep(delay)
     
-    print(f"Error: API request failed after {max_retries} attempts for URL: {url}")
+    print("Error: API request failed after {} attempts for URL: {}".format(
+        max_retries, url
+    ))
     return None
 
-def _finalize_forecast_day(result, current_date, temps_sum, temps_count, weather_counts, rain_sum, rain_count):
-    if temps_count <= 0:
-        return
-    avg_temp = temps_sum / temps_count
-    most_common_weather = max(weather_counts, key=weather_counts.get)
-    avg_rain_prob = (rain_sum / rain_count) * 100 if rain_count > 0 else 0
-    result.append((current_date, avg_temp, most_common_weather, avg_rain_prob))
-
-def _iter_raw_bytes(raw):
-    """Yields response bytes while reusing a fixed buffer when supported."""
-    buffer = bytearray(FORECAST_READ_BUFFER_SIZE)
-    readinto = getattr(raw, "readinto", None)
-    if readinto is not None:
-        try:
-            while True:
-                count = readinto(buffer)
-                if count is None:
-                    raise OSError("forecast stream has no data")
-                if count < 0:
-                    raise OSError("forecast stream read failed: {}".format(count))
-                if count == 0:
-                    return
-                for index in range(count):
-                    yield buffer[index]
-        except TypeError:
-            # A few host test doubles and older stream wrappers only support
-            # read(size); fall through without losing data.
-            pass
-
-    while True:
-        chunk = raw.read(FORECAST_READ_BUFFER_SIZE)
-        if not chunk:
-            return
-        for value in chunk:
-            yield value
+def _condition_from_code(code):
+    try:
+        return WMO_CONDITION_MAP.get(int(code), "Clouds")
+    except (TypeError, ValueError):
+        return "Clouds"
 
 
-def _iter_forecast_entries(response):
-    raw = getattr(response, "raw", None)
-    if raw is None:
-        raise AttributeError("Response raw stream is not available")
+def _timezone_name_from_offset(timezone_offset):
+    """Convert the device's fixed UTC offset to an IANA fixed-offset zone."""
+    try:
+        offset = int(timezone_offset)
+    except (TypeError, ValueError):
+        offset = 0
+    if offset < -12 or offset > 14:
+        offset = 0
+    if offset == 0:
+        return "UTC"
+    # Etc/GMT uses the opposite sign by convention: Etc/GMT-8 is UTC+8.
+    sign = "-" if offset > 0 else "+"
+    return "Etc/GMT{}{}".format(sign, abs(offset))
 
-    list_key = b'"list"'
-    key_pos = 0
-    waiting_for_list = False
-    in_list = False
-    in_string = False
-    escape = False
-    depth = 0
-    entry = None
 
-    for b in _iter_raw_bytes(raw):
-        if not in_list:
-            if waiting_for_list:
-                if b == ord('['):
-                    in_list = True
-                    waiting_for_list = False
-                continue
+def _forecast_url(latitude, longitude, variables, timezone_offset=8):
+    timezone_name = _timezone_name_from_offset(timezone_offset)
+    return "{}?latitude={}&longitude={}&{}&timezone={}".format(
+        OPEN_METEO_BASE_URL, latitude, longitude, variables, timezone_name
+    )
 
-            if b == list_key[key_pos]:
-                key_pos += 1
-                if key_pos == len(list_key):
-                    waiting_for_list = True
-                    key_pos = 0
-            else:
-                key_pos = 1 if b == list_key[0] else 0
-            continue
 
-        if entry is None:
-            if b == ord('{'):
-                entry = bytearray()
-                entry.append(b)
-                depth = 1
-                in_string = False
-                escape = False
-            elif b == ord(']'):
-                return
-            continue
+def _parse_forecast_data(data, days_limit):
+    """Converts Open-Meteo daily data to display_manager tuple format."""
+    daily = data["daily"]
+    dates = daily["time"]
+    codes = daily["weather_code"]
+    means = daily.get("temperature_2m_mean")
+    maximums = daily.get("temperature_2m_max")
+    minimums = daily.get("temperature_2m_min")
+    rain_probabilities = daily.get("precipitation_probability_max") or []
 
-        entry.append(b)
-        if len(entry) > MAX_FORECAST_ENTRY_BYTES:
-            raise ValueError("forecast entry is too large")
-        if in_string:
-            if escape:
-                escape = False
-            elif b == 92:
-                escape = True
-            elif b == 34:
-                in_string = False
-        else:
-            if b == 34:
-                in_string = True
-            elif b == ord('{'):
-                depth += 1
-            elif b == ord('}'):
-                depth -= 1
-                if depth == 0:
-                    yield entry
-                    entry = None
-                    gc.collect()
-
-def _aggregate_forecast_stream(response, days_limit, timezone_offset):
+    count = min(days_limit, len(dates), len(codes))
+    if len(rain_probabilities) < count:
+        raise ValueError("Open-Meteo precipitation probability is missing")
     result = []
-    processed_days = 0
-    current_date = None
-    temps_sum = 0
-    temps_count = 0
-    weather_counts = {}
-    rain_sum = 0
-    rain_count = 0
+    for index in range(count):
+        average = None
+        if means and index < len(means):
+            average = means[index]
+        elif maximums and minimums and index < len(maximums) and index < len(minimums):
+            average = (maximums[index] + minimums[index]) / 2
+        if average is None:
+            raise ValueError("Open-Meteo daily temperature is missing")
 
-    for entry_bytes in _iter_forecast_entries(response):
-        if processed_days >= days_limit:
-            break
-
-        try:
-            entry = ujson.loads(entry_bytes)
-        except (TypeError, ValueError):
-            entry = ujson.loads(entry_bytes.decode())
-        dt = entry["dt"]
-        local_time = time.localtime(dt + timezone_offset * 3600)
-        month_day = "{:02d}-{:02d}".format(local_time[1], local_time[2])
-
-        if current_date is None:
-            current_date = month_day
-
-        if month_day != current_date:
-            _finalize_forecast_day(result, current_date, temps_sum, temps_count, weather_counts, rain_sum, rain_count)
-            processed_days += 1
-
-            current_date = month_day
-            temps_sum = 0
-            temps_count = 0
-            weather_counts.clear()
-            rain_sum = 0
-            rain_count = 0
-
-        temp = entry["main"]["temp"]
-        weather = entry["weather"][0]["main"]
-        rain_prob = entry.get("pop", 0)
-
-        temps_sum += temp
-        temps_count += 1
-        weather_counts[weather] = weather_counts.get(weather, 0) + 1
-        rain_sum += rain_prob
-        rain_count += 1
-
-        entry = None
-        entry_bytes = None
-        gc.collect()
-
-    if temps_count > 0 and processed_days < days_limit:
-        _finalize_forecast_day(result, current_date, temps_sum, temps_count, weather_counts, rain_sum, rain_count)
-
+        date_value = dates[index]
+        if not isinstance(date_value, str) or len(date_value) < 10:
+            raise ValueError("Open-Meteo daily date is invalid")
+        rain_probability = rain_probabilities[index] if index < len(rain_probabilities) else 0
+        result.append((
+            date_value[5:10],
+            average,
+            _condition_from_code(codes[index]),
+            rain_probability if rain_probability is not None else 0,
+        ))
     return result
 
-def fetch_current_weather(api_key, location):
-    """Fetches current weather information."""
+
+def fetch_current_weather(latitude, longitude, timezone_offset=8):
+    """Fetches current weather information for a coordinate pair."""
     if not network.WLAN(network.STA_IF).isconnected():
         print("Info: No internet connection. Skipping current weather request.")
         return None
-    print(f"Info: Fetching current weather for {location}.")
-    url = "{}/weather?q={},TW&appid={}&units=metric".format(OPENWEATHER_BASE_URL, location, api_key)
+
+    print("Info: Fetching current weather for ({}, {}).".format(latitude, longitude))
+    url = _forecast_url(
+        latitude,
+        longitude,
+        # Request only fields consumed by the display; this keeps the response
+        # small during the TLS-sensitive startup and refresh paths.
+        "current=temperature_2m,weather_code",
+        timezone_offset,
+    )
     response = _make_request_with_retry(url)
-    
-    if response:
+    if not response:
+        return None
+
+    try:
+        data = response.json()
+        current = data["current"]
+        result = (
+            current["temperature_2m"],
+            _condition_from_code(current.get("weather_code")),
+        )
+        del data
+        gc.collect()
+        _log_heap("after current weather parse")
+        return result
+    except (ValueError, AttributeError, KeyError) as e:
+        print("Error: Failed to parse current weather data. Details: {}".format(e))
+        return None
+    except MemoryError:
+        print("Error: Memory allocation failed during current weather processing.")
+        gc.collect()
+        return None
+    except Exception as e:
+        print("Error: Unexpected current weather exception. Details: {}".format(e))
+        return None
+    finally:
         try:
-            data = response.json()
-            temp = data["main"]["temp"]
-            condition = data["weather"][0]["main"]
-            del data
-            gc.collect()
-            _log_heap("after current weather parse")
+            response.close()
+        except Exception:
+            pass
+        response = None
+        gc.collect()
 
-            return temp, condition
-        except (ValueError, AttributeError) as e:
-            print(f"Error: Failed to parse current weather data. Invalid JSON or attribute error. Details: {e}")
-            return None
-        except MemoryError:
-            print("Error: Memory allocation failed during current weather data processing.")
-            gc.collect()
-            return None
-        except Exception as e:
-            print(f"Error: An unexpected error occurred while fetching current weather. Details: {e}")
-            return None
-        finally:
-            try:
-                response.close()
-            except Exception as e_close:
-                print(f"Error: Failed to close response for current weather request. Details: {e_close}")
-            response = None
-            gc.collect()
 
-    return None
-
-def fetch_weather_forecast(api_key, location, days_limit=5, timezone_offset=8):
-    """Fetches weather forecast information. """
+def fetch_weather_forecast(latitude, longitude, days_limit=5, timezone_offset=8):
+    """Fetches daily Open-Meteo forecast in display tuple format."""
     if not network.WLAN(network.STA_IF).isconnected():
         print("Info: No internet connection. Skipping weather forecast request.")
         return []
 
-    print(f"Info: Fetching weather forecast for {location}.")
-    max_count = min(40, max(8, days_limit * 8))
+    try:
+        days_limit = int(days_limit)
+    except (TypeError, ValueError):
+        print("Error: Forecast day count is invalid.")
+        return []
+    if days_limit < 1 or days_limit > 16:
+        print("Error: Forecast day count must be between 1 and 16.")
+        return []
 
-    for forecast_count in FORECAST_COUNTS:
-        if forecast_count > max_count:
-            continue
-        response = None
+    print("Info: Fetching weather forecast for ({}, {}).".format(latitude, longitude))
+    url = _forecast_url(
+        latitude,
+        longitude,
+        # The display uses mean temperature, WMO code and rain probability.
+        "daily=weather_code,temperature_2m_mean,precipitation_probability_max&forecast_days={}".format(days_limit),
+        timezone_offset,
+    )
+    response = _make_request_with_retry(url)
+    if not response:
+        return []
+
+    try:
+        data = response.json()
+        result = _parse_forecast_data(data, days_limit)
+        if len(result) < days_limit:
+            print("Warning: Forecast returned only {} of {} requested days.".format(
+                len(result), days_limit
+            ))
+            return []
+        del data
+        gc.collect()
+        _log_heap("after forecast parse")
+        return result
+    except (ValueError, AttributeError, KeyError) as e:
+        print("Error: Failed to parse weather forecast data. Details: {}".format(e))
+        return []
+    except MemoryError:
+        print("Error: Memory allocation failed during forecast processing.")
+        gc.collect()
+        return []
+    except Exception as e:
+        print("Error: Unexpected weather forecast exception. Details: {}".format(e))
+        return []
+    finally:
         try:
-            gc.collect()
-            _log_heap("before forecast request")
-            url = "{0}/forecast?q={1},TW&appid={2}&units=metric&cnt={3}".format(OPENWEATHER_BASE_URL, location, api_key, forecast_count)
-            response = _make_request_with_retry(url)
-
-            if not response:
-                continue
-
-            if response.status_code != 200:
-                print(f"Error: Weather forecast query failed with status code: {response.status_code}")
-                continue
-
-            result = _aggregate_forecast_stream(response, days_limit, timezone_offset)
-            gc.collect()
-            _log_heap("after forecast parse")
-            if len(result) < days_limit:
-                print("Warning: Forecast returned only {} of {} requested days with cnt={}.".format(
-                    len(result), days_limit, forecast_count
-                ))
-                continue
-            return result
-
-        except (ValueError, AttributeError) as e:
-            print(f"Error: Failed to parse weather forecast data. Invalid JSON or attribute error. Details: {e}")
-            return []
-        except MemoryError:
-            print("Warning: Memory allocation failed with forecast cnt={}. Retrying smaller request.".format(forecast_count))
-            gc.collect()
-        except Exception as e:
-            print(f"Error: An unexpected error occurred while fetching weather forecast. Details: {e}")
-            return []
-        finally:
-            if response:
-                try:
-                    response.close()
-                except Exception as e_close:
-                    print(f"Error: Failed to close response for weather forecast request. Details: {e_close}")
-            response = None
-            gc.collect()
-
-    print("Error: Weather forecast failed after all memory fallback attempts.")
-    return []
+            response.close()
+        except Exception:
+            pass
+        response = None
+        gc.collect()

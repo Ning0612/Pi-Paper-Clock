@@ -70,7 +70,7 @@ class AppController:
     __slots__ = (
         "state", "hw", "lan_server", "lan_ip", "startup_discord_sent",
         "startup_discord_disabled", "startup_discord_attempted", "startup_discord_ready_ms",
-        "startup_discord_last_attempt_ms", "chime", "location", "api_key",
+        "startup_discord_last_attempt_ms", "chime", "weather_latitude", "weather_longitude",
         "time_zone_offset", "presence", "env", "boot_ms", "min_uptime_reached",
         "auto_reset_blocked", "stall_checked_failures", "stall_checked_threshold",
         "display_sleep_retry_ms",
@@ -93,8 +93,8 @@ class AppController:
         self.startup_discord_ready_ms = time.ticks_add(time.ticks_ms(), STARTUP_DISCORD_DELAY_MS)
         self.startup_discord_last_attempt_ms = time.ticks_add(time.ticks_ms(), -STARTUP_DISCORD_RETRY_MS)
         self.chime = Chime(20) if config_manager.get('chime.enabled') else None
-        self.location = config_manager.get("weather.location", "Taipei")
-        self.api_key = config_manager.get("weather.api_key")
+        self.weather_latitude = config_manager.get("weather.latitude")
+        self.weather_longitude = config_manager.get("weather.longitude")
         self.time_zone_offset = config_manager.get("user.timezone_offset", 8)
         self.presence = PresenceManager(
             discord_sender=send_presence_summary,
@@ -529,6 +529,7 @@ class AppController:
         """Fetches and updates current weather and forecast data if needed."""
         try:
             used_network = False
+            weather_workspace_released = False
             now_ms = time.ticks_ms()
 
             current_attempt_allowed = (
@@ -545,7 +546,12 @@ class AppController:
             if current_due:
                 used_network = True
                 self.state.current_weather_last_attempted = now_ms
-                current_weather = fetch_current_weather(self.api_key, self.location)
+                release_display_workspace()
+                gc.collect()
+                weather_workspace_released = True
+                current_weather = fetch_current_weather(
+                    self.weather_latitude, self.weather_longitude, self.time_zone_offset
+                )
                 if current_weather:
                     self.state.current_weather = current_weather
                     self.state.current_weather_last_updated = time.ticks_ms()
@@ -565,7 +571,15 @@ class AppController:
             if forecast_due:
                 used_network = True
                 self.state.weather_forecast_last_attempted = now_ms
-                weather_forecast = fetch_weather_forecast(self.api_key, self.location, days_limit=5, timezone_offset=self.time_zone_offset)
+                if not weather_workspace_released:
+                    release_display_workspace()
+                    gc.collect()
+                weather_forecast = fetch_weather_forecast(
+                    self.weather_latitude,
+                    self.weather_longitude,
+                    days_limit=5,
+                    timezone_offset=self.time_zone_offset,
+                )
                 if weather_forecast:
                     self.state.weather_forecast = weather_forecast
                     self.state.weather_forecast_last_updated = time.ticks_ms()

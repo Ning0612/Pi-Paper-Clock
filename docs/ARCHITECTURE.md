@@ -40,8 +40,8 @@ main.py
 - 自動重啟的保險：pending 未能寫入 flash（`pending_persist_failed`）時放棄重啟，否則會遺失只存在於 RAM 的通知；冷卻時間戳寫入失敗時放棄重啟並封鎖本次開機（fail-safe，不重啟優於 boot loop）；`discord_autoreset.log` 於執行期即時評估，冷卻可在運行中自然到期。**冷卻檔只有「檔案不存在」是 fail-open，其餘一律 fail-closed**：不存在代表從未自動重啟過，第一次不可被擋；其他讀取錯誤（`OSError` 非 ENOENT）與時鐘不可用則直接拒絕，因為此時冷卻狀態是「未知」，而未知不能讀成「允許」——間歇性的 flash 讀取失敗否則每失敗一次就放行一次重啟。檔案存在但內容不可用（截斷寫入、區塊損毀、`<= 0` 的數值）則重寫一個新的時間戳並拒絕本次重啟；若連重寫都失敗就設起 `auto_reset_blocked`，與呼叫端寫入失敗時的處置一致。**時間戳比當下時鐘還新時同樣走重寫路徑**：Pico W 沒有電池供電的 RTC，NTP 同步失敗的那次開機會讓 `time.time()` 從 port epoch 重新起算，於是由已同步開機寫下的時間戳永遠落在未來、差值恆為負；把它讀成「冷卻未到期」會讓保底重啟一路被封鎖到 NTP 再次成功，讀成「已到期」則會每輪都放行、而每次重啟又重置時基。重寫成當下時基並等滿一次冷卻是唯一不會卡死也不會失控的處置。把損毀讀成「從未重啟過」等於放棄唯一的 boot-loop 防護，而在離席門檻（約 2 分鐘）下那會退化成每次 uptime gate 到期就重開一次。
 - **離席分支的清屏睡眠必須包在 try/except 內**：`main.py` 以 `while True: controller.run_main_loop()` 裸迴圈驅動、未包例外處理，而 `clear_display_and_sleep()` 位於 `_check_discord_stall()` 之前，因此它拋出的例外會終止整個主程式，並讓最需要保底重啟的時刻永遠等不到重啟。失敗時不設起 `display_asleep`，但改以 `DISPLAY_SLEEP_RETRY_MS`（60 秒）退避後再試——完整清屏加面板初始化的成本太高，每秒重試一次會排擠 LAN polling、presence 更新與 stall 檢查並灌爆 UART log。「開機滿 5 分鐘」以 latch 記錄而非每次重算——`ticks_ms()` 為 30-bit、`ticks_diff()` 僅在約 ±6.2 天內有效，而這個故障正好出現在約 12 天的連續運行之後。
 - DHT22 使用 2500 ms 最小讀取間隔；讀取失敗改用 10 秒 backoff，保留上一筆快取值，避免感測器錯誤反覆消耗 heap 與刷 serial log。
-- 天氣預報使用 256-byte 固定串流 buffer 與 `readinto()`，逐筆解析 forecast entry；response、entry 暫存物件在處理後釋放並回收，避免一次載入完整 JSON 文件。
-- 天氣 request 前、response 取得後與 forecast parse 後會記錄 heap telemetry；forecast 優先直接解析 bytes，只有 MicroPython 相容性需要時才 fallback 到 decode。Presence API 的記憶體讀取介面只保留最近 128 筆事件與 366 筆 daily lines，且單行最多讀取 256 字元；完整串流 API 仍逐行送出。
+- 天氣資料改由 Open-Meteo 提供：current request 取得目前溫度與 WMO condition code，daily request 取得 5 天平均/高低溫、降雨機率與降水量；以 `response.json()` 解析小型 5-day payload，完成後立即釋放 response 與資料物件並回收 heap。既有 display icon 名稱由 WMO code mapping 保持不變。
+- 天氣 request 前、response 取得後與 forecast parse 後會記錄 heap telemetry；API 的 `timezone` 由 profile 的固定 `timezone_offset` 轉成 IANA `Etc/GMT` zone，使預報日期與裝置日期一致。Presence API 的記憶體讀取介面只保留最近 128 筆事件與 366 筆 daily lines，且單行最多讀取 256 字元；完整串流 API 仍逐行送出。
 - `/api/v1/device` 的 `heap_free` 可作為現場基線；完整 peak／長跑數據仍需接上指定 Pico 後量測。
 
 ### 記憶體問題的處理原則
@@ -53,7 +53,7 @@ main.py
        └─ ENOMEM：保留可重試狀態，不阻塞主迴圈
             ↓
 載入 display / HardwareManager / AppController
-  └─ 天氣 forecast 以固定 buffer 串流解析
+  └─ 天氣 forecast 以 5-day JSON payload 解析並立即釋放
   └─ DHT22 依時間節流，失敗使用 backoff 與快取
 ```
 

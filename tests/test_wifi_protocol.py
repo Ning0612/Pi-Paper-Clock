@@ -165,6 +165,15 @@ class WifiProtocolTests(unittest.TestCase):
             self.assertIn(b"Content-Encoding: gzip\r\n", client.sent)
             self.assertTrue(client.sent.endswith(payload))
 
+    def test_factory_reset_rejects_read_only_config_before_mutating(self):
+        original_config = self.module.config_manager
+        self.module.config_manager = types.SimpleNamespace(read_only=True)
+        try:
+            with self.assertRaisesRegex(ValueError, "newer configuration schema"):
+                self.module.factory_reset()
+        finally:
+            self.module.config_manager = original_config
+
     @classmethod
     def tearDownClass(cls):
         for name, module in cls.original_modules.items():
@@ -407,7 +416,8 @@ class WifiProtocolTests(unittest.TestCase):
             "profile_name": "Home",
             "ssid": "",
             "password": "",
-            "location": "Taipei",
+            "weather_latitude": "25.0330",
+            "weather_longitude": "121.5654",
             "birthday": "0101",
             "light_threshold": "20000",
             "presence_leave_timeout_sec": "420",
@@ -429,6 +439,8 @@ class WifiProtocolTests(unittest.TestCase):
             self.config.last_profile_update[1]["user"]["presence_return_timeout_sec"],
             15,
         )
+        self.assertEqual(self.config.last_profile_update[1]["weather_latitude"], 25.033)
+        self.assertEqual(self.config.last_profile_update[1]["weather_longitude"], 121.5654)
 
         params["presence_leave_timeout_sec"] = "59"
         with self.assertRaises(ValueError):

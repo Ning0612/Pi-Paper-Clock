@@ -29,6 +29,8 @@ PBKDF2_TARGET_MS = 250
 PBKDF2_PROBE_ITERATIONS = 64
 PBKDF2_MIN_ITERATIONS = 64
 PBKDF2_MAX_ITERATIONS = 65535
+DEFAULT_WEATHER_LATITUDE = 25.0330
+DEFAULT_WEATHER_LONGITUDE = 121.5654
 
 _CURRENT_SESSION_TOKEN = None
 _SESSION_START_MS = None
@@ -308,17 +310,16 @@ def factory_reset():
     """Performs a complete factory reset - deletes all profiles and restores defaults."""
     print("FACTORY RESET: Deleting all configurations and restoring defaults...")
 
-    # Delete config file completely
-    try:
-        import os
-        os.remove('config.json')
-        print("Config file deleted.")
-    except:
-        pass
+    if getattr(config_manager, "read_only", False):
+        raise ValueError("Cannot factory reset a newer configuration schema on this firmware.")
 
-    # Reinitialize config manager with defaults
+    previous_config = config_manager.config
     config_manager.config = config_manager._get_default_config()
-    config_manager._save_config()
+    try:
+        config_manager._save_config_with_reload()
+    except Exception:
+        config_manager.config = previous_config
+        raise
     _clear_session()
 
     print("Factory reset complete. Default configuration restored.")
@@ -542,7 +543,8 @@ def _config_payload(profile_name=None):
     safe_profile = {
         "name": profile.get("name", "") if profile else "",
         "wifi": {"ssid": profile.get("wifi", {}).get("ssid", "") if profile else ""},
-        "weather_location": profile.get("weather_location", "Taipei") if profile else "Taipei",
+        "weather_latitude": profile.get("weather_latitude", DEFAULT_WEATHER_LATITUDE) if profile else DEFAULT_WEATHER_LATITUDE,
+        "weather_longitude": profile.get("weather_longitude", DEFAULT_WEATHER_LONGITUDE) if profile else DEFAULT_WEATHER_LONGITUDE,
         "user": profile.get("user", {}) if profile else {},
         "chime": profile.get("chime", {}) if profile else {},
     }
@@ -553,7 +555,6 @@ def _config_payload(profile_name=None):
         "profile": safe_profile,
         "global": {
             "ap_mode_ssid": config_manager.get_global("ap_mode.ssid", "Pi_Clock_AP"),
-            "weather_api_key_configured": bool(config_manager.get_global("weather_api_key", "")),
             "discord_webhook_configured": bool(config_manager.get_global("discord_webhook_url", "")),
             "lan_admin_username": FIXED_ADMIN_USERNAME,
         },
@@ -1120,13 +1121,23 @@ def _save_settings_from_params(params):
     if validate_event(birthday_value) == "birthday":
         raise ValueError("Birthday must use MMDD format.")
 
+    def bounded_float(name, minimum, maximum):
+        try:
+            value = float(params.get(name, ""))
+        except (TypeError, ValueError):
+            raise ValueError("{} must be a number.".format(name))
+        if value < minimum or value > maximum:
+            raise ValueError("{} must be between {} and {}.".format(name, minimum, maximum))
+        return value
+
     profile_data = {
         "name": new_name,
         "wifi": {
             "ssid": params.get("ssid", ""),
             "password": wifi_password
         },
-        "weather_location": params.get("location", "Taipei"),
+        "weather_latitude": bounded_float("weather_latitude", -90, 90),
+        "weather_longitude": bounded_float("weather_longitude", -180, 180),
         "user": {
             "birthday": birthday_value,
             "light_threshold": bounded_int("light_threshold", 56000, 0, 65535),
@@ -1143,7 +1154,6 @@ def _save_settings_from_params(params):
         }
     }
 
-    api_key_input = params.get("api_key", "")
     ap_password_input = params.get("ap_mode_password", "")
     if ap_password_input and not 8 <= len(ap_password_input) <= 63:
         raise ValueError("AP password must contain 8-63 characters.")
@@ -1155,10 +1165,6 @@ def _save_settings_from_params(params):
         "ap_mode.ssid": params.get("ap_mode_ssid", "Pi_Clock_AP"),
         "lan_admin.username": FIXED_ADMIN_USERNAME,
     }
-    if api_key_input and not api_key_input.startswith("已設定") and "..." not in api_key_input:
-        global_updates["weather_api_key"] = api_key_input
-    elif params.get("clear_weather_api_key") == "true":
-        global_updates["weather_api_key"] = ""
     if ap_password_input:
         global_updates["ap_mode.password"] = ap_password_input
     if lan_admin_password:
@@ -1354,7 +1360,8 @@ def handle_config_request(cl, request, require_auth=False, client_key="unknown")
         new_profile = {
             "name": new_name,
             "wifi": {"ssid": "", "password": ""},
-            "weather_location": base_profile.get("weather_location", "Taipei") if base_profile else "Taipei",
+            "weather_latitude": base_profile.get("weather_latitude", DEFAULT_WEATHER_LATITUDE) if base_profile else DEFAULT_WEATHER_LATITUDE,
+            "weather_longitude": base_profile.get("weather_longitude", DEFAULT_WEATHER_LONGITUDE) if base_profile else DEFAULT_WEATHER_LONGITUDE,
             "user": dict(base_profile.get("user", {
                 "birthday": "0101",
                 "light_threshold": 56000,

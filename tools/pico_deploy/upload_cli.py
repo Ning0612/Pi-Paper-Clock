@@ -39,8 +39,15 @@ UPLOAD_IMAGES = True
 MPREMOTE_PORT = None
 ENABLE_CLEAN = True
 ENABLE_RECURSIVE_CLEAN = False  # 新增：是否遞迴清除所有檔案
-NO_CONFIG = False  # 新增：是否跳過 config.json
+NO_CONFIG = True  # 保護裝置上的 config.json；需明確 --include-config 才覆寫
+PROTECTED_CONFIG_FILES = ("config.json", "config.json.tmp", "config.json.bak")
 COMPILE_MPY = False  # 新增：部署前用 mpy-cross 將 .py 預編譯為 .mpy
+
+
+def _is_protected_config_path(path):
+    """Protect config artifacts whether a listing returns a basename or path."""
+    basename = str(path).rstrip("/").rsplit("/", 1)[-1].lstrip(":")
+    return basename in PROTECTED_CONFIG_FILES
 
 
 def interactive_repl(base_cmd, retry_count=30, retry_delay=1.0, connected_exit_seconds=2.0):
@@ -122,9 +129,12 @@ def run_command(command, ignore_exists_error=False, display_output=False, captur
 def get_mpremote_base():
     executable = shutil.which("mpremote")
     if not executable:
-        candidate = os.path.join(os.path.dirname(sys.executable), "mpremote.exe")
-        if os.path.exists(candidate):
-            executable = candidate
+        executable_dir = os.path.dirname(sys.executable)
+        for candidate_name in ("mpremote", "mpremote.exe"):
+            candidate = os.path.join(executable_dir, candidate_name)
+            if os.path.exists(candidate):
+                executable = candidate
+                break
     if not executable:
         executable = "mpremote"
     return [executable, "connect", MPREMOTE_PORT] if MPREMOTE_PORT else [executable]
@@ -249,7 +259,7 @@ def clean_all_files():
                 
             else:
                 # 如果是檔案，直接刪除
-                if NO_CONFIG and item_name == "config.json":
+                if NO_CONFIG and _is_protected_config_path(item_name):
                     continue
                 current_command_text = f"刪除檔案: {full_path}"
                 print(f"\r{current_command_text.ljust(80)}", end="", flush=True)
@@ -302,7 +312,7 @@ def clean_all_files():
     
     # 先刪除根目錄下的所有檔案
     for f in root_files:
-        if NO_CONFIG and f == "config.json":
+        if NO_CONFIG and _is_protected_config_path(f):
             continue
         current_command_text = f"刪除根目錄檔案: {f}"
         print(f"\r{current_command_text.ljust(80)}", end="", flush=True)
@@ -360,7 +370,7 @@ def clean_specific_files():
 
         # 檢查檔案副檔名
         if any(file_name.endswith(ext) for ext in INCLUDE_EXTENSIONS):
-            if NO_CONFIG and file_name == "config.json":
+            if NO_CONFIG and _is_protected_config_path(file_name):
                 continue
             files_to_delete.append(file_name)
 
@@ -424,7 +434,11 @@ def parse_args(argv=None):
     parser.add_argument("--no-images", action="store_false", dest="upload_images", default=True, help="Do not upload image files.")
     parser.add_argument("--recursive-clean", action="store_true", dest="recursive_clean", default=False, help="遞迴清除裝置上的所有檔案 (包含目錄)")
     parser.add_argument("--no-clean", action="store_false", dest="enable_clean", default=True, help="跳過清除檔案步驟")
-    parser.add_argument("--no-config", action="store_true", dest="no_config", default=False, help="不要上傳也不要刪除 config.json")
+    config_group = parser.add_mutually_exclusive_group()
+    config_group.add_argument("--no-config", action="store_true", dest="no_config", default=True,
+                              help="不要上傳也不要刪除 config.json（預設）")
+    config_group.add_argument("--include-config", action="store_false", dest="no_config",
+                              help="明確允許上傳本機 config.json 並參與清理")
     parser.add_argument("--mpy", action="store_true", dest="compile_mpy", default=False,
                         help="部署前用 mpy-cross 將 .py 預編譯為 .mpy 以節省裝置 flash（epaper.py／main.py／config.json 除外，需 pip install mpy-cross==1.24.1.post3）")
     return parser.parse_args(argv)

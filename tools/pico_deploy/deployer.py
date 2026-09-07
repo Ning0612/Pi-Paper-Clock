@@ -76,6 +76,21 @@ class DeployPlan:
         return sum(entry.size for entry in self.entries)
 
 
+def _resolve_mpremote(executable=None):
+    """Find mpremote on PATH or beside the active Python interpreter."""
+    if executable:
+        return executable
+    command = shutil.which("mpremote")
+    if command:
+        return command
+    executable_dir = Path(sys.executable).parent
+    for candidate_name in ("mpremote", "mpremote.exe"):
+        candidate = executable_dir / candidate_name
+        if candidate.exists():
+            return str(candidate)
+    return "mpremote"
+
+
 @dataclass(frozen=True)
 class DeploymentProgress:
     stage: str
@@ -119,7 +134,11 @@ def _add_files(
 def build_deploy_plan(options: DeployOptions) -> DeployPlan:
     """Build a stable manifest without touching the device."""
 
-    project_root = Path(options.source_root).expanduser().resolve()
+    # Keep the caller's absolute path spelling.  Resolving symlinks here turns
+    # macOS paths such as /var/folders into /private/var/folders, which makes
+    # the manifest point at a different string than the files the caller
+    # selected (and is unnecessary for mpremote).
+    project_root = Path(options.source_root).expanduser()
     source_dir = project_root / "src"
     if not source_dir.is_dir():
         raise DeploymentError(f"Project directory must contain src/: {project_root}")
@@ -176,10 +195,7 @@ class MpremoteRunner:
         if executable:
             command = executable
         else:
-            command = shutil.which("mpremote")
-            if not command:
-                candidate = Path(sys.executable).with_name("mpremote.exe")
-                command = str(candidate) if candidate.exists() else "mpremote"
+            command = _resolve_mpremote()
         self.base_command = [command, "connect", port] if port else [command]
         self._process: subprocess.Popen | None = None
 

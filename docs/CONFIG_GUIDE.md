@@ -12,10 +12,9 @@
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "global": {
     "ap_mode": { ... },
-    "weather_api_key": "...",
     "discord_webhook_url": "...",
     "setup_complete": false,
     "lan_admin": { "username": "admin", "password": "" }
@@ -26,7 +25,7 @@
 }
 ```
 
-`schema_version` 由裝置維護。啟動時會補齊 v3 必要欄位並將硬體相關數值限制在文件範圍；保存使用 `config.json.tmp`／`.bak` 交易，意外斷電後會自動復原。請勿手動降低版本號。
+`schema_version` 由裝置維護。啟動時會補齊 v4 必要欄位並將硬體相關數值限制在文件範圍；保存使用 `config.json.tmp`／`.bak` 交易，意外斷電後會自動復原。請勿手動降低版本號。
 
 若 `config.json` 的 `schema_version` 大於目前韌體支援的版本（例如被較新版本寫入後降級韌體），裝置會進入唯讀相容模式：略過遷移與正規化，且拒絕任何保存操作，直到韌體升級或版本號還原為止。
 
@@ -50,13 +49,6 @@ AP 模式（無法連接 WiFi 時的熱點模式）設定
 |------|------|------|--------|
 | `ssid` | String | AP 模式的 SSID（網路名稱） | `"Pi_Clock_AP"` |
 | `password` | String | AP 模式的密碼（至少 8 個字元） | `"12345678"` |
-
-#### `global.weather_api_key`
-OpenWeatherMap API 金鑰（所有設定檔共用同一個 API Key）
-
-| 類型 | 說明 | 取得方式 |
-|------|------|----------|
-| String | OpenWeatherMap API 金鑰 | [https://openweathermap.org/api](https://openweathermap.org/api) |
 
 #### 其他全域設定
 
@@ -83,7 +75,8 @@ Web UI 對 secret 欄位只顯示「已設定」狀態；留白保存時會保�
 {
   "name": "設定檔名稱",
   "wifi": { ... },
-  "weather_location": "城市名稱",
+  "weather_latitude": 25.0330,
+  "weather_longitude": 121.5654,
   "user": { ... },
   "chime": { ... }
 }
@@ -106,12 +99,17 @@ WiFi 連線設定
 
 **重要：** 系統會根據 WiFi SSID 自動識別並切換設定檔
 
-#### `profile.weather_location`
-天氣地點
+#### `profile.weather_latitude` / `profile.weather_longitude`
+天氣查詢位置的緯度與經度。每個 profile 可使用不同座標；裝置會將座標直接傳給 Open-Meteo，並使用該 profile 的固定 `timezone_offset` 產生預報日期。
 
-| 類型 | 說明 | 範例 |
-|------|------|------|
-| String | OpenWeatherMap 支援的城市名稱 | `"Taipei"`, `"Zhonghe"`, `"Tokyo"` |
+| 欄位 | 類型 | 範圍 | 範例 |
+|------|------|------|------|
+| `weather_latitude` | Number | `-90` ~ `90` | `25.0330` |
+| `weather_longitude` | Number | `-180` ~ `180` | `121.5654` |
+
+Open-Meteo 提供目前天氣與 5 天每日預報，不需要 API Key。WMO 天氣代碼會對應到裝置既有的天氣圖示；若網路或 API 暫時不可用，裝置沿用快取有效期限與日期／時間／圖片頁面的 fallback 行為。
+
+從舊版城市名稱遷移時，裝置只會離線對應內建的少數既有範例城市。無法對應的舊值會暫存於 `legacy_weather_location` 作為人工恢復提示，並先使用台北預設座標；此欄位不會被韌體拿來查詢天氣，請在設定頁填入正確座標後即可移除它。
 
 #### `profile.user`
 使用者個人化設定
@@ -277,18 +275,12 @@ WiFi 連線設定
 
 修改後下次進入 AP Mode 會使用新的設定。
 
-### Weather API Key
-
-Weather API Key 在所有設定檔之間共用，只需要設定一次。
-
-網頁介面中 API Key 欄位預設為唯讀，需要連點 7 次才能編輯（防止誤觸）。
-
 ---
 
 ## ❓ 常見問題
 
 ### Q: 舊版 config.json 會被刪除嗎？
-A: 會被自動轉換為新格式並覆寫，但所有設定都會保留。
+A: 會被自動轉換為新格式並覆寫。已知範例城市會轉成座標；無法離線對應的舊地點會保存在 `legacy_weather_location`，並先使用台北預設座標，避免靜默遺失資料。
 
 ### Q: 可以有多個設定檔使用同一個 WiFi SSID 嗎？
 A: 不建議。系統會根據 SSID 識別設定檔，如果有重複會使用第一個匹配的。
@@ -317,11 +309,11 @@ A: 先看裝置上的 `discord_diag.log`（可用 `mpremote connect COM<n> cat :
 
 ## 📚 相關資源
 
-- [OpenWeatherMap API 文件](https://openweathermap.org/api)
+- [Open-Meteo API 文件](https://open-meteo.com/en/docs)
 - [MicroPython 文件](https://docs.micropython.org/)
 - [專案 GitHub](https://github.com/Ning0612/pico-paper-clock)
 
 ---
 
-**版本：** 3.0（schema v3）
+**版本：** 4.0（schema v4）
 **更新日期：** 2026-07-17

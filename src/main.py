@@ -2,7 +2,7 @@
 import time
 import gc
 from wifi_manager import wifi_manager, create_lan_config_server
-from netutils import sync_time
+from netutils import sync_time, get_local_time
 from discord_notifier import send_lan_ip, consume_autoreset_ip
 
 
@@ -54,6 +54,37 @@ if _startup_network_connected:
 _startup_wlan = None
 
 
+# Fetch weather while only the low-dependency startup modules are resident.
+# Loading the display, sensor, image catalog and controller first fragments the
+# heap enough for the Pico W TLS allocation to fail even when mem_free is large.
+_startup_weather_current = None
+_startup_weather_forecast = None
+_startup_weather_timezone = 8
+if _startup_network_connected:
+    try:
+        from config_manager import config_manager
+        from weather import fetch_current_weather, fetch_weather_forecast
+
+        _startup_weather_latitude = config_manager.get("weather.latitude")
+        _startup_weather_longitude = config_manager.get("weather.longitude")
+        _startup_weather_timezone = config_manager.get("user.timezone_offset", 8)
+        _startup_weather_current = fetch_current_weather(
+            _startup_weather_latitude,
+            _startup_weather_longitude,
+            _startup_weather_timezone,
+        )
+        _startup_weather_forecast = fetch_weather_forecast(
+            _startup_weather_latitude,
+            _startup_weather_longitude,
+            days_limit=5,
+            timezone_offset=_startup_weather_timezone,
+        )
+    except Exception as e:
+        print("Warning: Startup weather prefetch failed. Details: {}".format(e))
+    finally:
+        gc.collect()
+
+
 def main():
     """Main function to initialize and run the Pico Clock Weather Display application."""
     from display_manager import update_page_loading
@@ -70,6 +101,22 @@ def main():
     # Initial display and hardware setup follows the memory-sensitive webhook.
     update_page_loading(False)
     app_state = AppState()
+    startup_weather_ms = time.ticks_ms()
+    startup_weather_prefetched = bool(_startup_weather_current or _startup_weather_forecast)
+    if startup_weather_prefetched:
+        # _handle_date_change() treats last_day == -1 as a new day and clears
+        # all weather state.  Seed it here so a successful low-memory startup
+        # fetch is used by the first display pass instead of being fetched again
+        # after the display modules have fragmented the heap.
+        app_state.last_day = get_local_time(offset=_startup_weather_timezone * 3600)[2]
+    if _startup_weather_current:
+        app_state.current_weather = _startup_weather_current
+        app_state.current_weather_last_updated = startup_weather_ms
+        app_state.current_weather_last_attempted = startup_weather_ms
+    if _startup_weather_forecast:
+        app_state.weather_forecast = _startup_weather_forecast
+        app_state.weather_forecast_last_updated = startup_weather_ms
+        app_state.weather_forecast_last_attempted = startup_weather_ms
     hardware = HardwareManager()
 
     controller = AppController(app_state, hardware, None, _startup_lan_ip)

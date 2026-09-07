@@ -16,7 +16,7 @@
 
 裝置在 AP 或 LAN 模式提供 Web UI，讓日常使用不必重新刷寫韌體即可管理顯示內容與查看書桌前活動：
 
-- **裝置設定**：管理 Wi-Fi profile、天氣地點、圖片輪播、感測器與提示音，以及 AP 管理選項。
+- **裝置設定**：管理 Wi-Fi profile、天氣經緯度、圖片輪播、感測器與提示音，以及 AP 管理選項。
 - **書桌前分析**：查看目前在席狀態、最近 24 小時與 30 天統計、年度熱力圖、每日紀錄和最近時段。
 - **環境紀錄**：查看目前溫濕度、今日 min/max/avg，以及日/週/月/年趨勢圖與每日統計表。
 - **圖片庫**：瀏覽 custom、events、login 圖片，預覽或刪除裝置上的素材；圖片上傳由 Pico Image Tool 處理。
@@ -56,17 +56,17 @@ py -3 -m venv .venv
 
 ### 2. 準備設定並部署
 
-1. 將 `src/config.json.example` 複製為未納入 Git 的 `src/config.json`，填入 Wi-Fi、Weather API Key 與其他設定。
+1. 將 `src/config.json.example` 複製為未納入 Git 的 `src/config.json`，填入 Wi-Fi、各 profile 的天氣經緯度與其他設定；Open-Meteo 不需要 API Key。
 2. 將 Pico W 以 USB 接上電腦，確認已安裝 MicroPython 與 `mpremote`。
 3. 執行部署（將 `COM7` 換成實際序列埠）：
 
    ```powershell
-   .\.venv\Scripts\python.exe tools\pico_deploy\upload_cli.py --port COM7 --no-clean
+   .\.venv\Scripts\python.exe tools\pico_deploy\upload_cli.py --port COM7 --no-config --no-clean
    ```
 
 4. 啟動後若無法連上已知 Wi-Fi，裝置會建立 AP；連線至螢幕顯示的 SSID，再開啟 `http://192.168.4.1` 完成設定。
 
-`tools\pico_deploy\upload_cli.py` 會在完成後重啟裝置並進入 REPL；按 `Ctrl+X` 離開。`--recursive-clean` 會刪除裝置上只存在於 runtime 的檔案與圖片，使用前請先備份。
+`tools\pico_deploy\upload_cli.py` 預設不會上傳或刪除裝置上的 `config.json`；只有明確指定 `--include-config` 才會納入本機設定。工具會在完成後重啟裝置並進入 REPL；按 `Ctrl+X` 離開。`--recursive-clean` 會刪除裝置上只存在於 runtime 的檔案與圖片，使用前請先備份。
 
 `tools\pico_deploy\upload_cli.py` 是無 GUI 的 headless USB 部署入口；根目錄 `upload.py` 只保留作為相容 wrapper，一般 Windows 使用者可改用 Release 的 `PicoPaperClockTool` GUI。
 

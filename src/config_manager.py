@@ -4,7 +4,19 @@ import os
 CONFIG_FILE = 'config.json'
 CONFIG_TMP_FILE = CONFIG_FILE + '.tmp'
 CONFIG_BACKUP_FILE = CONFIG_FILE + '.bak'
-CONFIG_SCHEMA_VERSION = 3
+CONFIG_SCHEMA_VERSION = 4
+DEFAULT_WEATHER_LATITUDE = 25.0330
+DEFAULT_WEATHER_LONGITUDE = 121.5654
+LEGACY_WEATHER_COORDINATES = {
+    "taipei": (25.0330, 121.5654),
+    "台北": (25.0330, 121.5654),
+    "zhonghe": (24.9937, 121.4967),
+    "中和": (24.9937, 121.4967),
+    "hsinchu": (24.8138, 120.9675),
+    "新竹": (24.8138, 120.9675),
+    "zhunan": (24.6855, 120.8789),
+    "竹南": (24.6855, 120.8789),
+}
 
 class ConfigManager:
     """Manages application configuration with multi-profile support."""
@@ -60,7 +72,6 @@ class ConfigManager:
                     "ssid": "Pi_Clock_AP",
                     "password": "12345678"
                 },
-                "weather_api_key": "",
                 "discord_webhook_url": "",
                 "env_log": {
                     "enabled": True,
@@ -79,7 +90,8 @@ class ConfigManager:
                         "ssid": "",
                         "password": ""
                     },
-                    "weather_location": "Taipei",
+                    "weather_latitude": DEFAULT_WEATHER_LATITUDE,
+                    "weather_longitude": DEFAULT_WEATHER_LONGITUDE,
                     "user": {
                         "birthday": "0101",
                         "light_threshold": 56000,
@@ -110,6 +122,9 @@ class ConfigManager:
             legacy_leave_timeout_sec = self._clamp_int(
                 legacy.get("user", {}).get("presence_timeout_min"), 1, 60, 3
             ) * 60
+            legacy_weather_latitude, legacy_weather_longitude = self._legacy_location_coordinates(
+                legacy.get("weather", {}).get("location")
+            )
             new_config = {
                 "schema_version": CONFIG_SCHEMA_VERSION,
                 "global": {
@@ -117,7 +132,6 @@ class ConfigManager:
                         "ssid": legacy.get("ap_mode", {}).get("ssid", "Pi_Clock_AP"),
                         "password": legacy.get("ap_mode", {}).get("password", "12345678")
                     },
-                    "weather_api_key": legacy.get("weather", {}).get("api_key", ""),
                     "discord_webhook_url": "",
                     "setup_complete": bool(legacy.get("wifi", {}).get("ssid", "")),
                     "lan_admin": {
@@ -132,7 +146,8 @@ class ConfigManager:
                             "ssid": legacy.get("wifi", {}).get("ssid", ""),
                             "password": legacy.get("wifi", {}).get("password", "")
                         },
-                        "weather_location": legacy.get("weather", {}).get("location", "Taipei"),
+                        "weather_latitude": legacy_weather_latitude,
+                        "weather_longitude": legacy_weather_longitude,
                         "user": {
                             "birthday": legacy.get("user", {}).get("birthday", "0101"),
                             "light_threshold": legacy.get("user", {}).get("light_threshold", 56000),
@@ -152,24 +167,75 @@ class ConfigManager:
                 "active_profile": "預設",
                 "last_connected_profile": None
             }
+            legacy_location = legacy.get("weather", {}).get("location")
+            if self._legacy_location_key(legacy_location) not in LEGACY_WEATHER_COORDINATES and legacy_location:
+                new_config["profiles"][0]["legacy_weather_location"] = str(legacy_location)
 
             self.config = new_config
             self._save_config()
             print("Success: Config migrated to multi-profile format.")
         elif self._schema_version_value() < CONFIG_SCHEMA_VERSION:
+            self._migrate_weather_config()
             self.config["schema_version"] = CONFIG_SCHEMA_VERSION
             self._save_config()
         elif self._schema_version_value() > CONFIG_SCHEMA_VERSION:
             print("Warning: Config schema is newer than this firmware; preserving version.")
 
+    def _legacy_location_key(self, location):
+        try:
+            return str(location or "").strip().lower()
+        except Exception:
+            return ""
+
+    def _legacy_location_coordinates(self, location):
+        key = self._legacy_location_key(location)
+        return LEGACY_WEATHER_COORDINATES.get(
+            key,
+            (DEFAULT_WEATHER_LATITUDE, DEFAULT_WEATHER_LONGITUDE),
+        )
+
+    def _coordinate_value(self, value, minimum, maximum, default=None):
+        try:
+            result = float(value)
+        except (TypeError, ValueError):
+            return default
+        if result != result or result < minimum or result > maximum:
+            return default
+        return result
+
+    def _migrate_weather_config(self):
+        """Replace legacy weather fields with Open-Meteo coordinates."""
+        global_config = self.config.get("global", {})
+        if "weather_api_key" in global_config:
+            del global_config["weather_api_key"]
+
+        for profile in self.config.get("profiles", []):
+            latitude = self._coordinate_value(profile.get("weather_latitude"), -90, 90)
+            longitude = self._coordinate_value(profile.get("weather_longitude"), -180, 180)
+            legacy_location = profile.get("weather_location")
+            legacy_latitude, legacy_longitude = self._legacy_location_coordinates(legacy_location)
+            if latitude is None:
+                latitude = legacy_latitude
+            if longitude is None:
+                longitude = legacy_longitude
+            if self._legacy_location_key(legacy_location) not in LEGACY_WEATHER_COORDINATES and legacy_location:
+                profile["legacy_weather_location"] = str(legacy_location)
+            profile["weather_latitude"] = latitude
+            profile["weather_longitude"] = longitude
+            if "weather_location" in profile:
+                del profile["weather_location"]
+
     def _normalize_config(self):
-        """Fill required v3 keys and clamp hardware-facing numeric settings."""
+        """Fill required v4 keys and clamp hardware-facing numeric settings."""
         changed = False
         defaults = self._get_default_config()
         if not isinstance(self.config.get("global"), dict):
             self.config["global"] = defaults["global"]
             changed = True
         global_config = self.config["global"]
+        if "weather_api_key" in global_config:
+            del global_config["weather_api_key"]
+            changed = True
         for key, value in defaults["global"].items():
             if key not in global_config:
                 global_config[key] = value
@@ -199,8 +265,20 @@ class ConfigManager:
                         if key not in profile[section]:
                             profile[section][key] = value
                             changed = True
-            if "weather_location" not in profile:
-                profile["weather_location"] = profile_default["weather_location"]
+            latitude = self._coordinate_value(
+                profile.get("weather_latitude"), -90, 90, DEFAULT_WEATHER_LATITUDE
+            )
+            longitude = self._coordinate_value(
+                profile.get("weather_longitude"), -180, 180, DEFAULT_WEATHER_LONGITUDE
+            )
+            if profile.get("weather_latitude") != latitude:
+                profile["weather_latitude"] = latitude
+                changed = True
+            if profile.get("weather_longitude") != longitude:
+                profile["weather_longitude"] = longitude
+                changed = True
+            if "weather_location" in profile:
+                del profile["weather_location"]
                 changed = True
 
             user = profile["user"]
@@ -273,6 +351,7 @@ class ConfigManager:
         if hasattr(os, "sync"):
             os.sync()
         moved_existing = False
+        installed_new = False
         try:
             os.remove(CONFIG_BACKUP_FILE)
         except OSError:
@@ -282,6 +361,7 @@ class ConfigManager:
                 os.rename(CONFIG_FILE, CONFIG_BACKUP_FILE)
                 moved_existing = True
             os.rename(CONFIG_TMP_FILE, CONFIG_FILE)
+            installed_new = True
             if hasattr(os, "sync"):
                 os.sync()
             if moved_existing:
@@ -290,16 +370,42 @@ class ConfigManager:
                 except OSError:
                     pass
         except Exception:
-            if moved_existing and not self._path_exists(CONFIG_FILE) and self._path_exists(CONFIG_BACKUP_FILE):
+            # A post-rename sync can fail after the new config is visible. Remove
+            # that uncommitted file before restoring the durable backup, otherwise
+            # the caller may reload factory defaults while flash keeps the new data.
+            if installed_new and self._path_exists(CONFIG_FILE):
+                try:
+                    os.remove(CONFIG_FILE)
+                except OSError:
+                    pass
+            if moved_existing and self._path_exists(CONFIG_BACKUP_FILE):
                 try:
                     os.rename(CONFIG_BACKUP_FILE, CONFIG_FILE)
                 except OSError:
                     pass
             raise
 
+    def _save_config_with_reload(self):
+        """Save config and restore the last durable state if saving fails."""
+        try:
+            self._save_config()
+        except Exception:
+            self.config = self._load_config()
+            raise
+
     def _require_writable(self):
         if self.read_only:
             raise ValueError("Configuration schema is newer than this firmware.")
+
+    def _validate_weather_coordinates(self, profile_data):
+        latitude = self._coordinate_value(profile_data.get("weather_latitude"), -90, 90)
+        longitude = self._coordinate_value(profile_data.get("weather_longitude"), -180, 180)
+        if latitude is None:
+            raise ValueError("Weather latitude is required and must be between -90 and 90.")
+        if longitude is None:
+            raise ValueError("Weather longitude is required and must be between -180 and 180.")
+        profile_data["weather_latitude"] = latitude
+        profile_data["weather_longitude"] = longitude
 
     def _set_global_value(self, key, value):
         keys = key.split('.')
@@ -321,6 +427,7 @@ class ConfigManager:
         new_name = profile_data.get("name", "")
         if not new_name:
             raise ValueError("Profile name is required.")
+        self._validate_weather_coordinates(profile_data)
         if original_name != new_name and self.get_profile(new_name) is not None:
             raise ValueError("Profile name already exists.")
 
@@ -332,6 +439,14 @@ class ConfigManager:
         if target_index < 0:
             raise ValueError("Profile does not exist.")
 
+        existing_profile = self.config["profiles"][target_index]
+        if (
+            existing_profile.get("legacy_weather_location")
+            and "legacy_weather_location" not in profile_data
+            and existing_profile.get("weather_latitude") == profile_data.get("weather_latitude")
+            and existing_profile.get("weather_longitude") == profile_data.get("weather_longitude")
+        ):
+            profile_data["legacy_weather_location"] = existing_profile["legacy_weather_location"]
         self.config["profiles"][target_index] = profile_data
         for key, value in (global_updates or {}).items():
             if value is not None:
@@ -346,11 +461,7 @@ class ConfigManager:
             self.config["last_connected_profile"] = new_name
         if self._schema_version_value() <= CONFIG_SCHEMA_VERSION:
             self.config["schema_version"] = CONFIG_SCHEMA_VERSION
-        try:
-            self._save_config()
-        except Exception:
-            self.config = self._load_config()
-            raise
+        self._save_config_with_reload()
         return True
 
     # ========== Profile Management Methods ==========
@@ -372,6 +483,7 @@ class ConfigManager:
         profile_data should be a complete profile dict with all required fields.
         """
         self._require_writable()
+        self._validate_weather_coordinates(profile_data)
         # Check if profile name already exists
         if self.get_profile(profile_data["name"]) is not None:
             raise ValueError(f"Profile '{profile_data['name']}' already exists.")
@@ -381,11 +493,12 @@ class ConfigManager:
             self.config["profiles"] = []
 
         self.config["profiles"].append(profile_data)
-        self._save_config()
+        self._save_config_with_reload()
 
     def update_profile(self, profile_name, profile_data):
         """Updates an existing profile with new data."""
         self._require_writable()
+        self._validate_weather_coordinates(profile_data)
         for i, profile in enumerate(self.config.get("profiles", [])):
             if profile["name"] == profile_name:
                 # If name is being changed, check for conflicts
@@ -393,6 +506,13 @@ class ConfigManager:
                     if self.get_profile(profile_data["name"]) is not None:
                         raise ValueError(f"Profile name '{profile_data['name']}' already exists.")
 
+                if (
+                    profile.get("legacy_weather_location")
+                    and "legacy_weather_location" not in profile_data
+                    and profile.get("weather_latitude") == profile_data.get("weather_latitude")
+                    and profile.get("weather_longitude") == profile_data.get("weather_longitude")
+                ):
+                    profile_data["legacy_weather_location"] = profile["legacy_weather_location"]
                 self.config["profiles"][i] = profile_data
 
                 # Update active_profile and last_connected_profile if necessary
@@ -401,7 +521,7 @@ class ConfigManager:
                 if self.config.get("last_connected_profile") == profile_name:
                     self.config["last_connected_profile"] = profile_data["name"]
 
-                self._save_config()
+                self._save_config_with_reload()
                 return True
         return False
 
@@ -422,7 +542,7 @@ class ConfigManager:
                 if self.config.get("last_connected_profile") == profile_name:
                     self.config["last_connected_profile"] = None
 
-                self._save_config()
+                self._save_config_with_reload()
                 return True
         return False
 
@@ -442,7 +562,7 @@ class ConfigManager:
             raise ValueError(f"Profile '{profile_name}' does not exist.")
 
         self.config["active_profile"] = profile_name
-        self._save_config()
+        self._save_config_with_reload()
 
     def set_last_connected_profile(self, profile_name):
         """Records the last successfully connected profile."""
@@ -451,7 +571,7 @@ class ConfigManager:
             raise ValueError(f"Profile '{profile_name}' does not exist.")
 
         self.config["last_connected_profile"] = profile_name
-        self._save_config()
+        self._save_config_with_reload()
 
     def get_last_connected_profile_name(self):
         """Returns the name of the last successfully connected profile."""
@@ -480,9 +600,6 @@ class ConfigManager:
                 return val[sub_key]
             return default
 
-        if key == "weather.api_key":
-            return self.config.get("global", {}).get("weather_api_key", default)
-
         # Handle profile-specific settings from active profile
         active_profile = self.get_active_profile()
         if not active_profile:
@@ -496,8 +613,11 @@ class ConfigManager:
                 return val[sub_key]
             return default
 
-        if key == "weather.location":
-            return active_profile.get("weather_location", default)
+        if key == "weather.latitude":
+            return active_profile.get("weather_latitude", default)
+
+        if key == "weather.longitude":
+            return active_profile.get("weather_longitude", default)
 
         if key.startswith("user."):
             sub_key = key[5:]  # Remove "user."
@@ -529,41 +649,38 @@ class ConfigManager:
             if "ap_mode" not in self.config["global"]:
                 self.config["global"]["ap_mode"] = {}
             self.config["global"]["ap_mode"][sub_key] = value
-            self._save_config()
+            self._save_config_with_reload()
             return
 
-        if key == "weather.api_key":
-            if "global" not in self.config:
-                self.config["global"] = {}
-            self.config["global"]["weather_api_key"] = value
-            self._save_config()
-            return
-
-        # Handle profile-specific settings - update active profile
+        # Handle profile-specific settings on a detached copy. This keeps an
+        # invalid coordinate or other rejected value out of the live RAM config.
         active_profile = self.get_active_profile()
         if not active_profile:
             return
+        profile_update = ujson.loads(ujson.dumps(active_profile))
 
         if key.startswith("wifi."):
             sub_key = key[5:]
-            if "wifi" not in active_profile:
-                active_profile["wifi"] = {}
-            active_profile["wifi"][sub_key] = value
-        elif key == "weather.location":
-            active_profile["weather_location"] = value
+            if "wifi" not in profile_update:
+                profile_update["wifi"] = {}
+            profile_update["wifi"][sub_key] = value
+        elif key == "weather.latitude":
+            profile_update["weather_latitude"] = value
+        elif key == "weather.longitude":
+            profile_update["weather_longitude"] = value
         elif key.startswith("user."):
             sub_key = key[5:]
-            if "user" not in active_profile:
-                active_profile["user"] = {}
-            active_profile["user"][sub_key] = value
+            if "user" not in profile_update:
+                profile_update["user"] = {}
+            profile_update["user"][sub_key] = value
         elif key.startswith("chime."):
             sub_key = key[6:]
-            if "chime" not in active_profile:
-                active_profile["chime"] = {}
-            active_profile["chime"][sub_key] = value
+            if "chime" not in profile_update:
+                profile_update["chime"] = {}
+            profile_update["chime"][sub_key] = value
 
         # Update the profile in the config
-        self.update_profile(active_profile["name"], active_profile)
+        self.update_profile(profile_update["name"], profile_update)
 
     def get_global(self, key, default=None):
         """Gets a value from global settings."""
@@ -580,6 +697,6 @@ class ConfigManager:
         """Sets a value in global settings."""
         self._require_writable()
         self._set_global_value(key, value)
-        self._save_config()
+        self._save_config_with_reload()
 
 config_manager = ConfigManager()

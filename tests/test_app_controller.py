@@ -150,8 +150,8 @@ class AppControllerDateChangeTests(unittest.TestCase):
         )
         controller = object.__new__(self.module.AppController)
         controller.state = state
-        controller.api_key = "test-key"
-        controller.location = "Zhunan"
+        controller.weather_latitude = 24.6855
+        controller.weather_longitude = 120.8789
         controller.time_zone_offset = 8
 
         original_ticks_ms = getattr(time, "ticks_ms", None)

@@ -19,6 +19,13 @@ class SettingsUiTests(unittest.TestCase):
             self.assertIn("setValue('presenceLeaveTimeout',u.presence_leave_timeout_sec)", content)
             self.assertIn("setValue('presenceReturnTimeout',u.presence_return_timeout_sec)", content)
 
+    def test_weather_coordinates_replace_city_and_openweather_fields(self):
+        for content in (self.source, self.asset):
+            self.assertIn('name="weather_latitude"', content)
+            self.assertIn('name="weather_longitude"', content)
+            self.assertNotIn("OpenWeather API Key", content)
+            self.assertNotIn("weather_location", content)
+
 
 if __name__ == "__main__":
     unittest.main()
